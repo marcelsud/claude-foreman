@@ -1,11 +1,11 @@
-# Claude Foreman
+# Foreman
 
 [![CI](https://github.com/marcelsud/claude-foreman/actions/workflows/ci.yml/badge.svg)](https://github.com/marcelsud/claude-foreman/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Give Claude Code or Codex background Claude Code and Codex workers for implementation tasks. Your interactive assistant remains the manager: it defines the work, handles routine approvals, watches progress, reviews the diff, and asks you before anything risky.
 
-Claude Foreman uses your existing Claude and ChatGPT subscription logins. It removes Anthropic and OpenAI API credentials from worker processes, so delegated work cannot silently switch to pay-as-you-go API billing.
+Foreman uses your existing Claude and ChatGPT subscription logins. It removes Anthropic and OpenAI API credentials from worker processes, so delegated work cannot silently switch to pay-as-you-go API billing.
 
 ## What you get
 
@@ -48,15 +48,15 @@ sudo apt-get update
 sudo apt-get install bubblewrap socat
 ```
 
-### 2. Bootstrap Claude Foreman
+### 2. Bootstrap Foreman
 
 ```bash
 git clone https://github.com/marcelsud/claude-foreman.git
 cd claude-foreman
-python3 plugins/claude-foreman/scripts/bootstrap_runtime.py
+python3 plugins/foreman/scripts/bootstrap_runtime.py
 ```
 
-The runtime and persistent state are stored outside the clone under `~/.local/share/claude-foreman` and are shared by the Codex and Claude Code integrations.
+The runtime and persistent state are stored outside the clone under `~/.local/share/foreman` and are shared by the Codex and Claude Code integrations.
 
 ### 3. Install it in your manager
 
@@ -64,23 +64,23 @@ For Codex:
 
 ```bash
 codex plugin marketplace add .
-codex plugin add claude-foreman@claude-foreman
+codex plugin add foreman@foreman
 ```
 
 For Claude Code, run these commands inside Claude Code:
 
 ```text
 /plugin marketplace add marcelsud/claude-foreman
-/plugin install claude-foreman@foreman
+/plugin install foreman@foreman
 /reload-plugins
 ```
 
 The Claude Code plugin exposes the same MCP tools and the skill
-`/claude-foreman:manage-claude-foreman`. For local plugin development without
+`/foreman:manage-foreman-agents`. For local plugin development without
 installing the marketplace, start Claude Code with:
 
 ```bash
-claude --plugin-dir ./plugins/claude-foreman
+claude --plugin-dir ./plugins/foreman
 ```
 
 ### 4. Start a manager session
@@ -94,7 +94,7 @@ Your target project must be a Git repository with at least one commit. Use its a
 Paste this into Claude Code or Codex and replace the repository path and requested change:
 
 ```text
-Use Claude Foreman to implement this in /absolute/path/to/my-repo:
+Use Foreman to implement this in /absolute/path/to/my-repo:
 
 Add validation for empty usernames and cover it with tests.
 
@@ -115,7 +115,7 @@ Use the Codex provider with gpt-5.6-terra and medium effort. Do not use an API k
 You can keep talking to the managing assistant while the worker runs. Ask for status at any time:
 
 ```text
-Show me the current Claude Foreman tasks, meaningful progress, and pending approvals.
+Show me the current Foreman tasks, meaningful progress, and pending approvals.
 ```
 
 `task_list` is compact by default, so operational status does not repeat full prompts. Ask for a full listing only when you need the original task definitions.
@@ -185,7 +185,7 @@ For subscription-authenticated runs, a monetary charge per task is not available
 For complex work, ask the manager to propose a reviewed multi-phase workflow:
 
 ```text
-Propose a Claude Foreman workflow for this repository with separate phases for
+Propose a Foreman workflow for this repository with separate phases for
 investigation, implementation, and verification. Show me every phase, model,
 effort, dependency, and permission implication before activating it.
 ```
@@ -197,7 +197,7 @@ Each phase waits for review before its dependent phase starts.
 Ask your manager:
 
 ```text
-Run Claude Foreman doctor and explain every failed check without changing anything.
+Run Foreman doctor and explain every failed check without changing anything.
 ```
 
 Common causes are an expired Claude or ChatGPT login, missing `bubblewrap` or `socat` for Claude workers, a repository without an initial commit, an unavailable verification executable, or starting the manager before the plugin was installed. After installing or updating, reload plugins or start a new manager session.
@@ -206,9 +206,9 @@ Do not put the SQLite database or active worktrees in OneDrive or another synchr
 
 ## Developer documentation
 
-- [Architecture, control model, and safety defaults](plugins/claude-foreman/README.md)
+- [Architecture, control model, and safety defaults](plugins/foreman/README.md)
 - [Contributing](CONTRIBUTING.md)
-- [Approval policy](plugins/claude-foreman/skills/manage-claude-foreman/references/approval-policy.md)
-- [Workflow schema](plugins/claude-foreman/skills/manage-claude-foreman/references/workflow-schema.md)
+- [Approval policy](plugins/foreman/skills/manage-foreman-agents/references/approval-policy.md)
+- [Workflow schema](plugins/foreman/skills/manage-foreman-agents/references/workflow-schema.md)
 
-Claude Foreman is open source under the [MIT License](LICENSE).
+Foreman is open source under the [MIT License](LICENSE).

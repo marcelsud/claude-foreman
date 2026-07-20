@@ -1,12 +1,12 @@
 # Contributing
 
-Thanks for helping improve Claude Foreman.
+Thanks for helping improve Foreman.
 
 ## Development setup
 
 1. Fork and clone the repository.
 2. Create a virtual environment with Python 3.11 or newer.
-3. Change to `plugins/claude-foreman`.
+3. Change to `plugins/foreman`.
 4. Create the environment with `python3 -m venv .venv`.
 5. Install the project with `.venv/bin/pip install -e .`.
 6. Run `.venv/bin/python -m unittest discover -s tests -v`.

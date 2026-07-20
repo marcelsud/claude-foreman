@@ -1,14 +1,14 @@
 {
-  "name": "claude-foreman",
+  "name": "foreman",
   "interface": {
-    "displayName": "Claude Foreman"
+    "displayName": "Foreman"
   },
   "plugins": [
     {
-      "name": "claude-foreman",
+      "name": "foreman",
       "source": {
         "source": "local",
-        "path": "./plugins/claude-foreman"
+        "path": "./plugins/foreman"
       },
       "policy": {
         "installation": "AVAILABLE",

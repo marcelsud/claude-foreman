@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "foreman": {
+      "command": "python3",
+      "args": ["./scripts/foreman_mcp.py"],
+      "cwd": "."
+    }
+  }
+}

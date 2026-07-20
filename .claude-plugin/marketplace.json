@@ -7,11 +7,11 @@
   "description": "Subscription-authenticated background coding workers managed from Claude Code or Codex",
   "plugins": [
     {
-      "name": "claude-foreman",
-      "source": "./plugins/claude-foreman",
-      "displayName": "Claude Foreman",
+      "name": "foreman",
+      "source": "./plugins/foreman",
+      "displayName": "Foreman",
       "description": "Manage isolated background Claude Code and Codex workers",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "author": {
         "name": "marcelsud"
       },
