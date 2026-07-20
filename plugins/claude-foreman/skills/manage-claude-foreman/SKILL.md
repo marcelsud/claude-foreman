@@ -1,11 +1,11 @@
 ---
 name: manage-claude-foreman
-description: Manage background Claude Code or Codex implementation work through the Claude Foreman MCP tools. Use when Codex needs to create goals, delegate isolated Git-worktree tasks, choose a provider, model, or effort level, monitor structured progress, decide routine approval requests, escalate dangerous actions to the user, review diffs, request rework, accept results, or create and review reusable multi-phase workflows.
+description: Manage background Claude Code or Codex implementation work through the Claude Foreman MCP tools. Use when Claude Code or Codex needs to create goals, delegate isolated Git-worktree tasks, choose a provider, model, or effort level, monitor structured progress, decide routine approval requests, escalate dangerous actions to the user, review diffs, request rework, accept results, or create and review reusable multi-phase workflows.
 ---
 
 # Manage Claude Foreman
 
-Use Claude or Codex as an implementation worker and keep the managing Codex task responsible for scope, approvals, and final review.
+Use Claude or Codex as an implementation worker and keep the managing session responsible for scope, approvals, and final review.
 
 ## Delegate work
 

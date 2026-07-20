@@ -1,6 +1,6 @@
 # Approval policy
 
-## Codex may decide
+## Manager may decide
 
 - Clarifying questions that do not change scope
 - Reversible commands confined to the task worktree

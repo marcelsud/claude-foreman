@@ -12,6 +12,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
+from . import __version__
 from .config import (
     ForemanConfig,
     codex_subscription_command,
@@ -91,7 +92,7 @@ class _AppServerCommands:
                     "clientInfo": {
                         "name": "claude-foreman-verifier",
                         "title": "Claude Foreman Verifier",
-                        "version": "0.3.1",
+                        "version": __version__,
                     }
                 },
             )

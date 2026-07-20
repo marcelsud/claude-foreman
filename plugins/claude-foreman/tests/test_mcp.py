@@ -41,6 +41,7 @@ class MCPTests(unittest.TestCase):
             {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}}
         )
         self.assertEqual("claude-foreman", initialized["result"]["serverInfo"]["name"])
+        self.assertEqual("0.4.0", initialized["result"]["serverInfo"]["version"])
         listed = self.server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
         names = {item["name"] for item in listed["result"]["tools"]}
         self.assertIn("task_create", names)

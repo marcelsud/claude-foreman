@@ -40,7 +40,7 @@ Rules:
 - Reference dependencies by task key. Dependencies must exist in the same workflow.
 - A phase may depend on at most one earlier phase, and a phase may have at most one child. This keeps each shared worktree's history linear. Use separate root chains for parallel work.
 - Use `${name}` placeholders only for values supplied to `workflow_run.inputs`.
-- Keep phases independently reviewable. A dependent task runs only after Codex accepts its parent and then continues in the same isolated worktree.
+- Keep phases independently reviewable. A dependent task runs only after the manager accepts its parent and then continues in the same isolated worktree.
 - Do not embed secrets, raw credentials, sandbox bypasses, force pushes, merges, or deployments.
 - Prefer repository scripts over long inline shell programs.
 - Proposing creates an immutable version. Review activates that exact version and supersedes the previous active version.

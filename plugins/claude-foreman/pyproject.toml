@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-foreman"
-version = "0.3.1"
-description = "A local control plane for Codex-managed background Claude Code and Codex workers"
+version = "0.4.0"
+description = "A local control plane for background Claude Code and Codex workers"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

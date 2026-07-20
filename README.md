@@ -3,13 +3,13 @@
 [![CI](https://github.com/marcelsud/claude-foreman/actions/workflows/ci.yml/badge.svg)](https://github.com/marcelsud/claude-foreman/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Give Codex background Claude Code or Codex workers for implementation tasks. Codex remains the manager: it defines the work, handles routine approvals, watches progress, reviews the diff, and asks you before anything risky.
+Give Claude Code or Codex background Claude Code and Codex workers for implementation tasks. Your interactive assistant remains the manager: it defines the work, handles routine approvals, watches progress, reviews the diff, and asks you before anything risky.
 
 Claude Foreman uses your existing Claude and ChatGPT subscription logins. It removes Anthropic and OpenAI API credentials from worker processes, so delegated work cannot silently switch to pay-as-you-go API billing.
 
 ## What you get
 
-- Background coding tasks that survive beyond a single Codex response
+- Background coding tasks that survive beyond a single manager response
 - One isolated Git worktree per task
 - Durable goals, tasks, progress events, approvals, and workflows in SQLite
 - Native token and duration summaries by model, run, task, requeue, and goal
@@ -26,7 +26,7 @@ Claude Foreman uses your existing Claude and ChatGPT subscription logins. It rem
 
 You need:
 
-- Codex with plugin support
+- Claude Code or Codex with plugin support
 - Python 3.11 or newer
 - Git
 - Linux, macOS, or WSL2
@@ -48,27 +48,50 @@ sudo apt-get update
 sudo apt-get install bubblewrap socat
 ```
 
-### 2. Install Claude Foreman
+### 2. Bootstrap Claude Foreman
 
 ```bash
 git clone https://github.com/marcelsud/claude-foreman.git
 cd claude-foreman
 python3 plugins/claude-foreman/scripts/bootstrap_runtime.py
+```
+
+The runtime and persistent state are stored outside the clone under `~/.local/share/claude-foreman` and are shared by the Codex and Claude Code integrations.
+
+### 3. Install it in your manager
+
+For Codex:
+
+```bash
 codex plugin marketplace add .
 codex plugin add claude-foreman@claude-foreman
 ```
 
-The runtime and persistent state are stored outside the clone under `~/.local/share/claude-foreman`.
+For Claude Code, run these commands inside Claude Code:
 
-### 3. Start a new Codex task
+```text
+/plugin marketplace add marcelsud/claude-foreman
+/plugin install claude-foreman@foreman
+/reload-plugins
+```
 
-Open a new task in Codex after installation so it discovers the Foreman skill and MCP tools.
+The Claude Code plugin exposes the same MCP tools and the skill
+`/claude-foreman:manage-claude-foreman`. For local plugin development without
+installing the marketplace, start Claude Code with:
+
+```bash
+claude --plugin-dir ./plugins/claude-foreman
+```
+
+### 4. Start a manager session
+
+Open a new Codex task after installation, or reload/restart Claude Code, so the manager discovers the Foreman skill and MCP tools.
 
 Your target project must be a Git repository with at least one commit. Use its absolute path when delegating work.
 
-### 4. Delegate your first task
+### 5. Delegate your first task
 
-Paste this into Codex and replace the repository path and requested change:
+Paste this into Claude Code or Codex and replace the repository path and requested change:
 
 ```text
 Use Claude Foreman to implement this in /absolute/path/to/my-repo:
@@ -89,7 +112,7 @@ To delegate the same work to Codex through your ChatGPT subscription, replace th
 Use the Codex provider with gpt-5.6-terra and medium effort. Do not use an API key.
 ```
 
-You can keep talking to Codex while Claude works. Ask for status at any time:
+You can keep talking to the managing assistant while the worker runs. Ask for status at any time:
 
 ```text
 Show me the current Claude Foreman tasks, meaningful progress, and pending approvals.
@@ -106,15 +129,15 @@ Show me the current Claude Foreman tasks, meaningful progress, and pending appro
 | `running` | The selected worker is working inside its isolated worktree. |
 | `awaiting_approval` | The worker needs an answer or an exact approval decision. |
 | `verifying` | Foreman is collecting the final repository state and results. |
-| `awaiting_review` | Codex should inspect the full diff and verification results. |
-| `completed` | Codex accepted the result after review. |
+| `awaiting_review` | The manager should inspect the full diff and verification results. |
+| `completed` | The manager accepted the result after review. |
 | `failed` / `cancelled` | The run ended without an accepted result. |
 
-Codex can approve reversible work confined to the task. Credential access, sandbox bypass, destructive commands, publishing, deployment, and other critical actions must come back to you.
+The manager can approve reversible work confined to the task. Credential access, sandbox bypass, destructive commands, publishing, deployment, and other critical actions must come back to you.
 
 ## Review and integrate the result
 
-Acceptance is a review decision, not a merge. The changes remain uncommitted in the Foreman worktree. Ask Codex to show the worktree path and final diff, then decide how to integrate them into your branch.
+Acceptance is a review decision, not a merge. The changes remain uncommitted in the Foreman worktree. Ask the manager to show the worktree path and final diff, then decide how to integrate them into your branch.
 
 For example:
 
@@ -159,7 +182,7 @@ For subscription-authenticated runs, a monetary charge per task is not available
 
 ## Reusable workflows
 
-For complex work, ask Codex to propose a reviewed multi-phase workflow:
+For complex work, ask the manager to propose a reviewed multi-phase workflow:
 
 ```text
 Propose a Claude Foreman workflow for this repository with separate phases for
@@ -171,13 +194,13 @@ Each phase waits for review before its dependent phase starts.
 
 ## Troubleshooting
 
-Ask Codex:
+Ask your manager:
 
 ```text
 Run Claude Foreman doctor and explain every failed check without changing anything.
 ```
 
-Common causes are an expired Claude or ChatGPT login, missing `bubblewrap` or `socat` for Claude workers, a repository without an initial commit, an unavailable verification executable, or opening Codex before the plugin was installed. After installing or updating, start a new Codex task.
+Common causes are an expired Claude or ChatGPT login, missing `bubblewrap` or `socat` for Claude workers, a repository without an initial commit, an unavailable verification executable, or starting the manager before the plugin was installed. After installing or updating, reload plugins or start a new manager session.
 
 Do not put the SQLite database or active worktrees in OneDrive or another synchronized directory. The defaults already use a local path.
 

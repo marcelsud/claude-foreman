@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-marketplace.json",
+  "name": "foreman",
+  "owner": {
+    "name": "marcelsud"
+  },
+  "description": "Subscription-authenticated background coding workers managed from Claude Code or Codex",
+  "plugins": [
+    {
+      "name": "claude-foreman",
+      "source": "./plugins/claude-foreman",
+      "displayName": "Claude Foreman",
+      "description": "Manage isolated background Claude Code and Codex workers",
+      "version": "0.4.0",
+      "author": {
+        "name": "marcelsud"
+      },
+      "homepage": "https://github.com/marcelsud/claude-foreman",
+      "repository": "https://github.com/marcelsud/claude-foreman",
+      "license": "MIT",
+      "category": "development",
+      "tags": ["background-agents", "codex", "claude-code", "git-worktrees"]
+    }
+  ]
+}

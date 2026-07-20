@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from . import __version__
 from .approval_policy import auto_allow, classify_risk, request_hash
 from .config import (
     ForemanConfig,
@@ -115,7 +116,7 @@ class CodexAppServerWorker:
                     "clientInfo": {
                         "name": "claude-foreman",
                         "title": "Claude Foreman",
-                        "version": "0.3.1",
+                        "version": __version__,
                     },
                     "capabilities": {"experimentalApi": True},
                 },

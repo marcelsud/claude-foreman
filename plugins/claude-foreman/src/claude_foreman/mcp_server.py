@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from . import __version__
 from .approval_policy import human_only
 from .config import ForemanConfig
 from .controller import DaemonController
@@ -461,7 +462,7 @@ class MCPServer:
                 result = {
                     "protocolVersion": message.get("params", {}).get("protocolVersion", "2025-06-18"),
                     "capabilities": {"tools": {"listChanged": False}},
-                    "serverInfo": {"name": "claude-foreman", "version": "0.1.0"},
+                    "serverInfo": {"name": "claude-foreman", "version": __version__},
                 }
             elif method == "ping":
                 result = {}
