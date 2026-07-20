@@ -56,6 +56,20 @@ Start the scheduler:
 .venv/bin/foreman daemon start
 ```
 
+Open the live terminal dashboard in another shell:
+
+```bash
+.venv/bin/foreman monitor
+```
+
+From a plugin checkout that uses the shared bootstrapped runtime, the equivalent
+command is `python3 scripts/foreman_cli.py monitor`.
+
+Use the arrow keys or `j`/`k` to select a task and `q` to exit. The dashboard
+shows daemon health, compact progress, approvals, verification gates, worktree
+details, and token usage. Filter it with `--status running`, adjust refresh with
+`--interval 0.5`, or use `--once --no-color` for a script-friendly snapshot.
+
 Both bundled plugins start the same bridge at `scripts/foreman_mcp.py`. Codex reads the relative command from `.mcp.json`; the Claude Code manifest resolves the cached bridge through `${CLAUDE_PLUGIN_ROOT}`. In a source checkout the bridge automatically re-executes under `.venv`; `FOREMAN_PYTHON` can override that interpreter.
 
 Before installing a cached/personal copy of the plugin, create its stable shared runtime:

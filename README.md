@@ -120,6 +120,18 @@ Show me the current Foreman tasks, meaningful progress, and pending approvals.
 
 `task_list` is compact by default, so operational status does not repeat full prompts. Ask for a full listing only when you need the original task definitions.
 
+For a live terminal view, open another shell in the repository after bootstrapping
+the runtime:
+
+```bash
+python3 plugins/foreman/scripts/foreman_cli.py monitor
+```
+
+The dashboard refreshes automatically and shows task state, worker model,
+meaningful progress, approvals, verification gates, worktree details, and usage.
+Navigate with `↑`/`↓` or `j`/`k`, refresh with `r`, and exit with `q`. Use
+`--once --no-color` when you want a single plain-text snapshot.
+
 ## What happens next
 
 | State | Meaning |

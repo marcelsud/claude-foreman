@@ -6,8 +6,10 @@ from typing import Any
 
 from .config import ForemanConfig
 from .controller import DaemonController
+from .dashboard import run_monitor
 from .database import ForemanDB
 from .doctor import run_doctor
+from .models import TaskStatus
 
 
 def _print(value: Any) -> None:
@@ -25,6 +27,12 @@ def build_parser() -> argparse.ArgumentParser:
     goals.add_argument("--status")
     tasks = sub.add_parser("tasks")
     tasks.add_argument("--status")
+    monitor = sub.add_parser("monitor", help="open the live terminal task dashboard")
+    monitor.add_argument("--status", choices=[str(status) for status in TaskStatus])
+    monitor.add_argument("--interval", type=float, default=1.0)
+    monitor.add_argument("--limit", type=int, default=100)
+    monitor.add_argument("--once", action="store_true", help="render one snapshot and exit")
+    monitor.add_argument("--no-color", action="store_true")
     approvals = sub.add_parser("approvals")
     approvals.add_argument("--status", default="pending")
     return parser
@@ -49,6 +57,17 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "tasks":
         db.initialize()
         _print(db.list_tasks(args.status))
+    elif args.command == "monitor":
+        db.initialize()
+        run_monitor(
+            db,
+            DaemonController(config),
+            status=args.status,
+            interval=max(0.1, args.interval),
+            limit=max(1, min(args.limit, 1000)),
+            once=args.once,
+            color=False if args.no_color else None,
+        )
     elif args.command == "approvals":
         db.initialize()
         _print(db.list_approvals(args.status))
