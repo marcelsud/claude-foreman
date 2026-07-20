@@ -17,6 +17,30 @@ class CodexUnavailable(RuntimeError):
     pass
 
 
+def _subscription_auth_summary(response: Any) -> dict[str, str]:
+    """Interpret account/read without treating an ambiguous response as authenticated."""
+    if not isinstance(response, dict) or "account" not in response:
+        raise CodexUnavailable(
+            "Codex ChatGPT subscription authentication could not be verified"
+        )
+
+    account = response["account"]
+    if isinstance(account, dict):
+        if account.get("type") == "chatgpt":
+            return {"type": "chatgpt"}
+        raise CodexUnavailable(
+            "Codex must use ChatGPT subscription authentication; "
+            "the reported account type is not allowed"
+        )
+
+    if account is None and response.get("requiresOpenaiAuth") is False:
+        return {"type": "managed"}
+
+    raise CodexUnavailable(
+        "Codex must be logged in with ChatGPT subscription authentication"
+    )
+
+
 def _redact(value: Any) -> Any:
     if isinstance(value, dict):
         result: dict[str, Any] = {}
@@ -95,13 +119,7 @@ class CodexAppServerWorker:
             )
             await self._notify("initialized")
             account = await self._request("account/read", {"refreshToken": False})
-            account_type = ((account or {}).get("account") or {}).get("type")
-            if account_type != "chatgpt":
-                raise CodexUnavailable(
-                    "Codex must be logged in with ChatGPT subscription auth; "
-                    f"found {account_type or 'no login'}"
-                )
-            self.db.add_event(task.id, run_id, "codex.auth_verified", {"type": "chatgpt"})
+            self._verify_subscription_auth(account)
             models = await self._request("model/list", {"limit": 100})
             catalog = {item.get("model"): item for item in (models or {}).get("data", [])}
             selected = catalog.get(task.model)
@@ -159,6 +177,15 @@ class CodexAppServerWorker:
             return self.final_result
         finally:
             await self._shutdown()
+
+    def _verify_subscription_auth(self, response: Any) -> None:
+        assert self.task and self.run_id
+        self.db.add_event(
+            self.task.id,
+            self.run_id,
+            "codex.auth_verified",
+            _subscription_auth_summary(response),
+        )
 
     async def _request(self, method: str, params: dict[str, Any]) -> Any:
         request_id = self._next_id

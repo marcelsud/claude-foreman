@@ -5,7 +5,12 @@ import asyncio
 import unittest
 from pathlib import Path
 
-from claude_foreman.codex_worker import CodexAppServerWorker, _redact
+from claude_foreman.codex_worker import (
+    CodexAppServerWorker,
+    CodexUnavailable,
+    _redact,
+    _subscription_auth_summary,
+)
 from claude_foreman.config import ForemanConfig
 from claude_foreman.database import ForemanDB
 from claude_foreman.approval_policy import request_hash
@@ -120,6 +125,60 @@ class CodexWorkerTests(unittest.IsolatedAsyncioTestCase):
         )
         usage = {"total": {"inputTokens": 10, "outputTokens": 2}}
         self.assertEqual(usage, _redact({"tokenUsage": usage})["tokenUsage"])
+
+    def test_chatgpt_account_is_accepted(self) -> None:
+        self.assertEqual(
+            {"type": "chatgpt"},
+            _subscription_auth_summary({"account": {"type": "chatgpt"}}),
+        )
+
+    def test_managed_authenticated_session_is_accepted(self) -> None:
+        self.assertEqual(
+            {"type": "managed"},
+            _subscription_auth_summary(
+                {"account": None, "requiresOpenaiAuth": False}
+            ),
+        )
+
+    def test_null_account_requiring_auth_is_rejected(self) -> None:
+        with self.assertRaises(CodexUnavailable):
+            _subscription_auth_summary(
+                {"account": None, "requiresOpenaiAuth": True}
+            )
+
+    def test_null_account_without_auth_requirement_is_rejected(self) -> None:
+        with self.assertRaises(CodexUnavailable):
+            _subscription_auth_summary({"account": None})
+
+    def test_non_chatgpt_account_type_is_rejected(self) -> None:
+        for account_type in ("apiKey", "enterprise", None):
+            with self.subTest(account_type=account_type):
+                with self.assertRaises(CodexUnavailable):
+                    _subscription_auth_summary(
+                        {"account": {"type": account_type}}
+                    )
+
+    def test_auth_event_summary_does_not_expose_account_data(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            worker, db = self.make_worker(Path(temp))
+            worker._verify_subscription_auth(
+                {
+                    "account": {
+                        "type": "chatgpt",
+                        "email": "person@example.test",
+                        "accessToken": "access-secret",
+                    },
+                    "token": "top-level-secret",
+                }
+            )
+
+            event = db.event_tail(worker.task.id, limit=1)[0]
+            self.assertEqual("codex.auth_verified", event["kind"])
+            self.assertEqual({"type": "chatgpt"}, event["payload"])
+            encoded = str(event["payload"])
+            self.assertNotIn("person@example.test", encoded)
+            self.assertNotIn("access-secret", encoded)
+            self.assertNotIn("top-level-secret", encoded)
 
 
 if __name__ == "__main__":
