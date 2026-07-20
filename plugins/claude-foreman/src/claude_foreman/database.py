@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterator
 
+from .approval_policy import routine_sandboxed_command
 from .models import ApprovalStatus, Goal, GoalStatus, Task, TaskStatus, resolve_worker_config
 
 
@@ -116,6 +117,54 @@ CREATE TABLE IF NOT EXISTS artifacts (
     content TEXT,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS run_usage (
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    reasoning_output_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER,
+    api_equivalent_cost_usd REAL,
+    cost_is_estimate INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, model)
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_usage_task ON run_usage(task_id, run_id);
+
+CREATE TABLE IF NOT EXISTS verification_gates (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    command TEXT NOT NULL,
+    required INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    superseded_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS verification_results (
+    id TEXT PRIMARY KEY,
+    gate_id TEXT NOT NULL REFERENCES verification_gates(id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    exit_code INTEGER,
+    duration_ms INTEGER,
+    stdout_excerpt TEXT NOT NULL DEFAULT '',
+    stderr_excerpt TEXT NOT NULL DEFAULT '',
+    snapshot_sha TEXT,
+    completed_at TEXT NOT NULL,
+    UNIQUE(gate_id, run_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_verification_results_task_run
+ON verification_results(task_id, run_id);
 """
 
 
@@ -224,6 +273,7 @@ class ForemanDB:
         max_turns: int = 80,
         depends_on: list[str] | None = None,
         workspace_group: str | None = None,
+        verification_commands: list[str] | None = None,
     ) -> Task:
         provider, model, effort = resolve_worker_config(provider, model, effort)
         if not prompt.strip():
@@ -260,6 +310,9 @@ class ForemanDB:
                     "INSERT INTO task_dependencies(task_id, depends_on) VALUES (?, ?)",
                     (task_id, dep),
                 )
+            self._insert_verification_gates(
+                conn, task_id, verification_commands or [], now
+            )
         self.add_event(
             task_id, None, "task.created",
             {"provider": provider, "model": model, "effort": effort},
@@ -273,7 +326,10 @@ class ForemanDB:
             raise KeyError(f"task not found: {task_id}")
         return Task(**dict(row))
 
-    def list_tasks(self, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    def list_tasks(
+        self, status: str | None = None, limit: int = 100, compact: bool = True
+    ) -> list[dict[str, Any]]:
+        self.expire_pending_approvals()
         query = "SELECT * FROM tasks"
         params: list[Any] = []
         if status:
@@ -282,7 +338,90 @@ class ForemanDB:
         query += " ORDER BY priority DESC, created_at ASC LIMIT ?"
         params.append(max(1, min(limit, 1000)))
         with self.connect() as conn:
-            return [dict(row) for row in conn.execute(query, params)]
+            rows = [dict(row) for row in conn.execute(query, params)]
+        if not compact:
+            return rows
+        return [self._compact_task(row) for row in rows]
+
+    def _compact_task(self, task: dict[str, Any]) -> dict[str, Any]:
+        task_id = str(task["id"])
+        significant_prefixes = (
+            "task.", "run.", "approval.", "verification.",
+            "worktree.ready", "review.feedback",
+        )
+        latest_progress = None
+        for event in reversed(self.event_tail(task_id, limit=100)):
+            if event["kind"].startswith(significant_prefixes):
+                payload = event["payload"]
+                if isinstance(payload, dict):
+                    summary = next(
+                        (
+                            payload.get(key) for key in
+                            ("summary", "message", "error", "status", "command", "risk")
+                            if payload.get(key) is not None
+                        ),
+                        None,
+                    )
+                else:
+                    summary = payload
+                if summary is None:
+                    encoded = json.dumps(payload, ensure_ascii=False, default=str)
+                    summary = encoded[:500] + ("…" if len(encoded) > 500 else "")
+                latest_progress = {
+                    "event_id": event["id"],
+                    "kind": event["kind"],
+                    "summary": str(summary)[:500],
+                    "created_at": event["created_at"],
+                }
+                break
+        with self.connect() as conn:
+            pending_approvals = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM approvals WHERE task_id=? AND status=?",
+                    (task_id, ApprovalStatus.PENDING),
+                ).fetchone()[0]
+            )
+            dependencies = [
+                str(row["depends_on"])
+                for row in conn.execute(
+                    "SELECT depends_on FROM task_dependencies WHERE task_id=? ORDER BY depends_on",
+                    (task_id,),
+                )
+            ]
+            dependents = [
+                str(row["task_id"])
+                for row in conn.execute(
+                    "SELECT task_id FROM task_dependencies WHERE depends_on=? ORDER BY task_id",
+                    (task_id,),
+                )
+            ]
+        verification = self.verification_summary(task_id)
+        result_summary = str(task.get("result_summary") or "")
+        return {
+            "id": task_id,
+            "goal_id": task.get("goal_id"),
+            "provider": task["provider"],
+            "model": task["model"],
+            "effort": task["effort"],
+            "status": task["status"],
+            "priority": task["priority"],
+            "latest_progress": latest_progress,
+            "pending_approvals": pending_approvals,
+            "verification": {
+                "required_ok": verification["required_ok"],
+                "counts": verification["counts"],
+            },
+            "result_summary": result_summary[:500] + (
+                "…" if len(result_summary) > 500 else ""
+            ),
+            "worktree_path": task.get("worktree_path"),
+            "branch_name": task.get("branch_name"),
+            "workspace_group": task.get("workspace_group"),
+            "dependencies": dependencies,
+            "dependents": dependents,
+            "created_at": task["created_at"],
+            "updated_at": task["updated_at"],
+        }
 
     def claim_next_task(self) -> Task | None:
         now = utcnow()
@@ -371,6 +510,7 @@ class ForemanDB:
         effort: str | None = None,
         priority: int | None = None,
         max_turns: int | None = None,
+        verification_commands: list[str] | None = None,
     ) -> Task:
         task = self.get_task(task_id)
         if task.status != TaskStatus.QUEUED:
@@ -398,7 +538,7 @@ class ForemanDB:
             changes["priority"] = int(priority)
         if max_turns is not None:
             changes["max_turns"] = max(1, int(max_turns))
-        if not changes:
+        if not changes and verification_commands is None:
             raise ValueError("provide at least one task configuration field")
         changes["updated_at"] = utcnow()
         assignments = ", ".join(f"{key}=?" for key in changes)
@@ -409,8 +549,55 @@ class ForemanDB:
             )
             if cur.rowcount != 1:
                 raise ValueError("task left the queue while it was being configured")
+            if verification_commands is not None:
+                conn.execute(
+                    """UPDATE verification_gates SET superseded_at=?
+                       WHERE task_id=? AND superseded_at IS NULL""",
+                    (changes["updated_at"], task_id),
+                )
+                self._insert_verification_gates(
+                    conn, task_id, verification_commands, changes["updated_at"]
+                )
+        if verification_commands is not None:
+            changes["verification_commands"] = list(verification_commands)
         self.add_event(task_id, None, "task.configured", changes)
         return self.get_task(task_id)
+
+    @staticmethod
+    def _validated_verification_commands(commands: list[str]) -> list[str]:
+        if not isinstance(commands, list):
+            raise ValueError("verification_commands must be an array")
+        if len(commands) > 20:
+            raise ValueError("verification_commands supports at most 20 gates")
+        validated: list[str] = []
+        for raw_command in commands:
+            if not isinstance(raw_command, str) or not raw_command.strip():
+                raise ValueError("every verification command must be a non-empty string")
+            command = raw_command.strip()
+            if not routine_sandboxed_command(command):
+                raise ValueError(
+                    "verification commands must be a single routine test, lint, build, "
+                    "typecheck, or read-only Git command without shell operators: " + command
+                )
+            validated.append(command)
+        return validated
+
+    @staticmethod
+    def _insert_verification_gates(
+        conn: sqlite3.Connection,
+        task_id: str,
+        commands: list[str],
+        created_at: str,
+    ) -> None:
+        for position, command in enumerate(
+            ForemanDB._validated_verification_commands(commands)
+        ):
+            conn.execute(
+                """INSERT INTO verification_gates(
+                    id, task_id, position, command, required, created_at, superseded_at
+                ) VALUES (?, ?, ?, ?, 1, ?, NULL)""",
+                (str(uuid.uuid4()), task_id, position, command, created_at),
+            )
 
     def request_cancel(self, task_id: str) -> Task:
         current = self.get_task(task_id)
@@ -480,6 +667,269 @@ class ForemanDB:
             item["payload"] = json.loads(item.pop("payload_json"))
             result.append(item)
         return result
+
+    def upsert_run_usage(
+        self,
+        *,
+        run_id: str,
+        task_id: str,
+        provider: str,
+        model: str,
+        input_tokens: int = 0,
+        cache_creation_input_tokens: int = 0,
+        cache_read_input_tokens: int = 0,
+        output_tokens: int = 0,
+        reasoning_output_tokens: int = 0,
+        total_tokens: int = 0,
+        duration_ms: int | None = None,
+        api_equivalent_cost_usd: float | None = None,
+    ) -> None:
+        values = {
+            "input_tokens": max(0, int(input_tokens or 0)),
+            "cache_creation_input_tokens": max(0, int(cache_creation_input_tokens or 0)),
+            "cache_read_input_tokens": max(0, int(cache_read_input_tokens or 0)),
+            "output_tokens": max(0, int(output_tokens or 0)),
+            "reasoning_output_tokens": max(0, int(reasoning_output_tokens or 0)),
+            "total_tokens": max(0, int(total_tokens or 0)),
+        }
+        if not values["total_tokens"]:
+            values["total_tokens"] = sum(
+                values[key]
+                for key in (
+                    "input_tokens", "cache_creation_input_tokens",
+                    "cache_read_input_tokens", "output_tokens",
+                )
+            )
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO run_usage(
+                    run_id, task_id, provider, model, input_tokens,
+                    cache_creation_input_tokens, cache_read_input_tokens,
+                    output_tokens, reasoning_output_tokens, total_tokens,
+                    duration_ms, api_equivalent_cost_usd, cost_is_estimate, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                ON CONFLICT(run_id, model) DO UPDATE SET
+                    input_tokens=excluded.input_tokens,
+                    cache_creation_input_tokens=excluded.cache_creation_input_tokens,
+                    cache_read_input_tokens=excluded.cache_read_input_tokens,
+                    output_tokens=excluded.output_tokens,
+                    reasoning_output_tokens=excluded.reasoning_output_tokens,
+                    total_tokens=excluded.total_tokens,
+                    duration_ms=COALESCE(excluded.duration_ms, run_usage.duration_ms),
+                    api_equivalent_cost_usd=COALESCE(
+                        excluded.api_equivalent_cost_usd,
+                        run_usage.api_equivalent_cost_usd
+                    ),
+                    updated_at=excluded.updated_at""",
+                (
+                    run_id, task_id, provider, model,
+                    values["input_tokens"], values["cache_creation_input_tokens"],
+                    values["cache_read_input_tokens"], values["output_tokens"],
+                    values["reasoning_output_tokens"], values["total_tokens"],
+                    max(0, int(duration_ms)) if duration_ms is not None else None,
+                    float(api_equivalent_cost_usd)
+                    if api_equivalent_cost_usd is not None else None,
+                    utcnow(),
+                ),
+            )
+
+    def set_run_usage_duration(self, run_id: str, model: str, duration_ms: int) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE run_usage SET duration_ms=?, updated_at=? WHERE run_id=? AND model=?",
+                (max(0, int(duration_ms)), utcnow(), run_id, model),
+            )
+
+    @staticmethod
+    def _sum_usage(rows: list[dict[str, Any]]) -> dict[str, Any]:
+        token_fields = (
+            "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens",
+            "output_tokens", "reasoning_output_tokens", "total_tokens",
+        )
+        totals: dict[str, Any] = {
+            key: sum(int(row.get(key) or 0) for row in rows) for key in token_fields
+        }
+        costs = [
+            float(row["api_equivalent_cost_usd"])
+            for row in rows if row.get("api_equivalent_cost_usd") is not None
+        ]
+        totals["api_equivalent_cost_usd"] = round(sum(costs), 8) if costs else None
+        durations_by_run: dict[str, int] = {}
+        for row in rows:
+            if row.get("duration_ms") is not None:
+                run_id = str(row.get("run_id") or "unknown")
+                durations_by_run[run_id] = max(
+                    durations_by_run.get(run_id, 0), int(row["duration_ms"])
+                )
+        totals["duration_ms"] = sum(durations_by_run.values())
+        totals["cost_is_estimate"] = bool(costs)
+        totals["cost_kind"] = (
+            "api_equivalent_estimate" if costs else "unavailable_for_subscription"
+        )
+        totals["cost_note"] = (
+            "API-equivalent estimate reported by the provider; it is not an actual "
+            "subscription charge."
+            if costs else
+            "No per-task monetary charge is exposed for this subscription-authenticated run."
+        )
+        return totals
+
+    def task_usage(self, task_id: str) -> dict[str, Any]:
+        task = self.get_task(task_id)
+        with self.connect() as conn:
+            rows = [
+                dict(row) for row in conn.execute(
+                    """SELECT u.*, r.attempt, r.started_at, r.completed_at
+                       FROM run_usage u JOIN runs r ON r.id=u.run_id
+                       WHERE u.task_id=? ORDER BY r.attempt, u.model""",
+                    (task_id,),
+                )
+            ]
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            grouped.setdefault(str(row["run_id"]), []).append(row)
+        runs: list[dict[str, Any]] = []
+        for run_rows in grouped.values():
+            first = run_rows[0]
+            item = {
+                "run_id": first["run_id"],
+                "attempt": first["attempt"],
+                "provider": first["provider"],
+                "started_at": first["started_at"],
+                "completed_at": first["completed_at"],
+                "duration_ms": max(
+                    (int(row["duration_ms"]) for row in run_rows if row["duration_ms"] is not None),
+                    default=None,
+                ),
+                "models": [
+                    {
+                        key: row[key]
+                        for key in (
+                            "model", "input_tokens", "cache_creation_input_tokens",
+                            "cache_read_input_tokens", "output_tokens",
+                            "reasoning_output_tokens", "total_tokens",
+                            "api_equivalent_cost_usd",
+                        )
+                    }
+                    for row in run_rows
+                ],
+            }
+            item["totals"] = self._sum_usage(run_rows)
+            runs.append(item)
+        return {
+            "task_id": task_id,
+            "goal_id": task.goal_id,
+            "provider": task.provider,
+            "runs": runs,
+            "totals": self._sum_usage(rows),
+        }
+
+    def goal_usage(self, goal_id: str) -> dict[str, Any]:
+        self.get_goal(goal_id)
+        with self.connect() as conn:
+            task_ids = [
+                str(row["id"])
+                for row in conn.execute(
+                    "SELECT id FROM tasks WHERE goal_id=? ORDER BY created_at", (goal_id,)
+                )
+            ]
+            rows = [
+                dict(row) for row in conn.execute(
+                    """SELECT u.* FROM run_usage u
+                       JOIN tasks t ON t.id=u.task_id WHERE t.goal_id=?""",
+                    (goal_id,),
+                )
+            ]
+        return {
+            "goal_id": goal_id,
+            "tasks": [self.task_usage(task_id) for task_id in task_ids],
+            "totals": self._sum_usage(rows),
+        }
+
+    def verification_gates(self, task_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """SELECT * FROM verification_gates
+                   WHERE task_id=? AND superseded_at IS NULL ORDER BY position""",
+                (task_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_verification_result(
+        self,
+        *,
+        gate_id: str,
+        task_id: str,
+        run_id: str,
+        status: str,
+        exit_code: int | None,
+        duration_ms: int | None,
+        stdout_excerpt: str,
+        stderr_excerpt: str,
+        snapshot_sha: str | None,
+    ) -> None:
+        if status not in {"passed", "failed", "error", "timed_out"}:
+            raise ValueError(f"invalid verification status: {status}")
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO verification_results(
+                    id, gate_id, task_id, run_id, status, exit_code, duration_ms,
+                    stdout_excerpt, stderr_excerpt, snapshot_sha, completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(gate_id, run_id) DO UPDATE SET
+                    status=excluded.status, exit_code=excluded.exit_code,
+                    duration_ms=excluded.duration_ms,
+                    stdout_excerpt=excluded.stdout_excerpt,
+                    stderr_excerpt=excluded.stderr_excerpt,
+                    snapshot_sha=excluded.snapshot_sha,
+                    completed_at=excluded.completed_at""",
+                (
+                    str(uuid.uuid4()), gate_id, task_id, run_id, status, exit_code,
+                    duration_ms, stdout_excerpt[-8000:], stderr_excerpt[-8000:],
+                    snapshot_sha, utcnow(),
+                ),
+            )
+
+    def verification_results(
+        self, task_id: str, run_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        if run_id is None:
+            run_id = self.latest_run_id(task_id)
+        gates = self.verification_gates(task_id)
+        if not run_id:
+            return [
+                {**gate, "status": "pending", "result": None} for gate in gates
+            ]
+        with self.connect() as conn:
+            results = {
+                str(row["gate_id"]): dict(row)
+                for row in conn.execute(
+                    "SELECT * FROM verification_results WHERE task_id=? AND run_id=?",
+                    (task_id, run_id),
+                )
+            }
+        return [
+            {
+                "id": gate["id"],
+                "position": gate["position"],
+                "command": gate["command"],
+                "required": bool(gate["required"]),
+                "status": results.get(gate["id"], {}).get("status", "pending"),
+                "result": results.get(gate["id"]),
+            }
+            for gate in gates
+        ]
+
+    def verification_summary(self, task_id: str) -> dict[str, Any]:
+        results = self.verification_results(task_id)
+        counts = {
+            status: sum(1 for item in results if item["status"] == status)
+            for status in ("pending", "passed", "failed", "error", "timed_out")
+        }
+        required_ok = all(
+            not item["required"] or item["status"] == "passed" for item in results
+        )
+        return {"required_ok": required_ok, "counts": counts, "gates": results}
 
     def create_approval(
         self,
@@ -776,6 +1226,9 @@ class ForemanDB:
             resolve_worker_config(
                 item.get("provider"), item.get("model"), item.get("effort", "medium")
             )
+            self._validated_verification_commands(
+                item.get("verification_commands", [])
+            )
             if item["key"] in keys:
                 raise ValueError(f"duplicate workflow task key: {item['key']}")
             keys.add(item["key"])
@@ -910,6 +1363,7 @@ class ForemanDB:
                 max_turns=int(spec.get("max_turns", 80)),
                 depends_on=dependencies,
                 workspace_group=workspace_group,
+                verification_commands=spec.get("verification_commands", []),
             )
         return {
             "workflow": {"name": name, "version": workflow["version"]},

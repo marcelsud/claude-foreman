@@ -12,6 +12,8 @@ from .config import ForemanConfig, enforce_subscription_environment, missing_san
 from .database import ForemanDB, utcnow
 from .models import ApprovalStatus, Task, TaskStatus
 from .worktrees import WorktreeManager
+from .verification import run_verification_gates
+from .usage import record_claude_result_usage
 
 
 WORKER_POLICY = """
@@ -88,12 +90,24 @@ class ClaudeWorker:
                     raise asyncio.CancelledError
             result = await query_task
             self.db.update_task(task.id, status=TaskStatus.VERIFYING)
+            verification = await run_verification_gates(
+                self.config, self.db, task, run_id, worktree.path
+            )
             snapshot = self.worktrees.snapshot(worktree.path)
             self.db.add_event(task.id, run_id, "worktree.snapshot", snapshot)
             self.db.update_task(
                 task.id,
                 status=TaskStatus.AWAITING_REVIEW,
-                result_summary=result or f"{task.provider.title()} finished without a textual summary.",
+                result_summary=(
+                    result or f"{task.provider.title()} finished without a textual summary."
+                ) + (
+                    (
+                        "\n\nForeman verification gates: passed."
+                        if verification["required_ok"]
+                        else "\n\nForeman verification gates require attention."
+                    )
+                    if verification["gates"] else ""
+                ),
             )
             self.db.close_pending_approvals(run_id, "run finished")
             self.db.finish_run(run_id, "awaiting_review", 0, None)
@@ -307,6 +321,7 @@ class ClaudeWorker:
                 payload,
             )
             if isinstance(message, ResultMessage):
+                record_claude_result_usage(self.db, task, run_id, message)
                 final_result = getattr(message, "result", None)
                 if getattr(message, "is_error", False):
                     subtype = getattr(message, "subtype", "error")

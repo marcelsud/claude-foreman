@@ -12,10 +12,12 @@ Claude Foreman uses your existing Claude and ChatGPT subscription logins. It rem
 - Background coding tasks that survive beyond a single Codex response
 - One isolated Git worktree per task
 - Durable goals, tasks, progress events, approvals, and workflows in SQLite
+- Native token and duration summaries by model, run, task, requeue, and goal
 - Configurable provider, model, effort, priority, dependencies, and turn budget
 - Claude models plus the GPT-5.6 Codex family: Sol, Terra, and Luna
 - Sandboxed worker commands with network access disabled by default
 - A review gate before any result is accepted
+- Foreman-run verification gates with command, exit code, duration, output, and tested snapshot
 - No automatic commits, pushes, merges, deployments, or worktree deletion
 
 ## Quick start
@@ -93,6 +95,8 @@ You can keep talking to Codex while Claude works. Ask for status at any time:
 Show me the current Claude Foreman tasks, meaningful progress, and pending approvals.
 ```
 
+`task_list` is compact by default, so operational status does not repeat full prompts. Ask for a full listing only when you need the original task definitions.
+
 ## What happens next
 
 | State | Meaning |
@@ -133,6 +137,26 @@ If you specify a `gpt-5.6-*` model, Foreman infers the Codex provider. If you sp
 
 You can change model or effort while a task is still queued. Once claimed, the task keeps its original configuration for a reproducible audit trail.
 
+## Usage and verification
+
+Add exact verification commands when delegating work:
+
+```text
+Use gpt-5.6-terra with high effort. After implementation, have Foreman run
+these verification gates: npm test, npm run lint, and git status.
+```
+
+Foreman executes declared gates independently through the Codex App Server command sandbox: argv-only, workspace write access, no network, bounded output, and a configurable timeout. Results include the exit code, duration, output excerpts, and a fingerprint of the worktree state tested.
+
+Ask for aggregated usage at any time:
+
+```text
+Show task usage by run and model, including new input, cache created, cache read,
+output, reasoning output, total tokens, and duration. Then show the goal total.
+```
+
+For subscription-authenticated runs, a monetary charge per task is not available. Claude may report an API-equivalent dollar estimate; Foreman labels it as an estimate. Codex subscription runs report tokens and duration without inventing a dollar cost.
+
 ## Reusable workflows
 
 For complex work, ask Codex to propose a reviewed multi-phase workflow:
@@ -153,7 +177,7 @@ Ask Codex:
 Run Claude Foreman doctor and explain every failed check without changing anything.
 ```
 
-Common causes are an expired Claude or ChatGPT login, missing `bubblewrap` or `socat` for Claude workers, a repository without an initial commit, or opening Codex before the plugin was installed. After installing or updating, start a new Codex task.
+Common causes are an expired Claude or ChatGPT login, missing `bubblewrap` or `socat` for Claude workers, a repository without an initial commit, an unavailable verification executable, or opening Codex before the plugin was installed. After installing or updating, start a new Codex task.
 
 Do not put the SQLite database or active worktrees in OneDrive or another synchronized directory. The defaults already use a local path.
 

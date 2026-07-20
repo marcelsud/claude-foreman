@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -12,6 +13,16 @@ from .models import Task
 
 class GitError(RuntimeError):
     pass
+
+
+SANDBOX_ARTIFACT_PATHS = {
+    ".claude.json",
+    ".claude/settings.local.json",
+    "dev/null",
+    "dev/random",
+    "dev/tty",
+    "dev/urandom",
+}
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -88,11 +99,116 @@ class WorktreeManager:
             )
         return Worktree(path=path, branch=branch, repo_root=root)
 
-    def snapshot(self, worktree: str | Path) -> dict[str, str]:
+    @staticmethod
+    def _is_sandbox_artifact(root: Path, relative_path: str) -> bool:
+        normalized = relative_path.replace("\\", "/").strip("/")
+        if normalized in SANDBOX_ARTIFACT_PATHS:
+            return True
+        candidate = root / relative_path
+        try:
+            return candidate.exists() and not (
+                candidate.is_file() or candidate.is_dir() or candidate.is_symlink()
+            )
+        except OSError:
+            return True
+
+    def status(self, worktree: str | Path) -> dict[str, object]:
         path = Path(worktree).resolve()
+        branch = _git(path, "branch", "--show-current").stdout.strip()
+        raw = _git(path, "status", "--porcelain=v1", "-z", "--untracked-files=all").stdout
+        entries = [entry for entry in raw.split("\0") if entry]
+        intended: list[str] = []
+        artifacts: list[str] = []
+        intended_untracked: list[str] = []
+        skip_rename_target = False
+        for entry in entries:
+            if skip_rename_target:
+                skip_rename_target = False
+                continue
+            if len(entry) < 4:
+                continue
+            code = entry[:2]
+            relative = entry[3:]
+            if code[0] in {"R", "C"} or code[1] in {"R", "C"}:
+                skip_rename_target = True
+            if code == "??" and self._is_sandbox_artifact(path, relative):
+                artifacts.append(relative)
+                continue
+            intended.append(entry)
+            if code == "??":
+                intended_untracked.append(relative)
+        prefix = f"## {branch or '(detached)'}\n"
         return {
-            "status": _git(path, "status", "--short", "--branch").stdout,
-            "diff_stat": _git(path, "diff", "HEAD", "--stat").stdout,
-            "untracked": _git(path, "ls-files", "--others", "--exclude-standard").stdout,
+            "raw_status": prefix + "\n".join(entries) + ("\n" if entries else ""),
+            "intended_status": prefix + "\n".join(intended) + ("\n" if intended else ""),
+            "sandbox_artifacts": artifacts,
+            "intended_untracked": intended_untracked,
+        }
+
+    @staticmethod
+    def _untracked_stats(path: Path, relative: str) -> dict[str, object]:
+        candidate = path / relative
+        size = candidate.stat().st_size
+        added = 0
+        binary = False
+        with candidate.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                if b"\0" in chunk:
+                    binary = True
+                added += chunk.count(b"\n")
+        if size and not binary:
+            with candidate.open("rb") as handle:
+                handle.seek(-1, os.SEEK_END)
+                if handle.read(1) != b"\n":
+                    added += 1
+        return {
+            "path": relative,
+            "added": None if binary else added,
+            "deleted": 0,
+            "binary": binary,
+            "untracked": True,
+            "size_bytes": size,
+        }
+
+    def snapshot(self, worktree: str | Path) -> dict[str, object]:
+        path = Path(worktree).resolve()
+        status = self.status(path)
+        diff_files: list[dict[str, object]] = []
+        numstat = _git(path, "diff", "HEAD", "--numstat", "--").stdout
+        for line in numstat.splitlines():
+            parts = line.split("\t", 2)
+            if len(parts) != 3:
+                continue
+            added, deleted, relative = parts
+            candidate = path / relative
+            diff_files.append(
+                {
+                    "path": relative,
+                    "added": int(added) if added.isdigit() else None,
+                    "deleted": int(deleted) if deleted.isdigit() else None,
+                    "binary": added == "-" or deleted == "-",
+                    "untracked": False,
+                    "size_bytes": candidate.stat().st_size if candidate.is_file() else 0,
+                }
+            )
+        for relative in status["intended_untracked"]:
+            candidate = path / str(relative)
+            if candidate.is_file() and not candidate.is_symlink():
+                diff_files.append(self._untracked_stats(path, str(relative)))
+        stat_lines = []
+        for item in diff_files:
+            change = (
+                f"binary {item['size_bytes']} bytes"
+                if item["binary"] else f"+{item['added']} -{item['deleted']}"
+            )
+            suffix = " (new)" if item["untracked"] else ""
+            stat_lines.append(f"{item['path']} | {change}{suffix}")
+        return {
+            **status,
+            "status": status["intended_status"],
+            "diff_stat": "\n".join(stat_lines) + ("\n" if stat_lines else ""),
+            "diff_files": diff_files,
+            "untracked": "\n".join(str(item) for item in status["intended_untracked"])
+            + ("\n" if status["intended_untracked"] else ""),
             "commits": _git(path, "log", "--oneline", "--decorate", "-10").stdout,
         }

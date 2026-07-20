@@ -56,6 +56,8 @@ def _task_payload(db: ForemanDB, task_id: str) -> JSON:
     task = db.get_task(task_id).to_dict()
     task["events_tail"] = db.event_tail(task_id, limit=20)
     task["pending_approvals"] = db.approvals_for_task(task_id, "pending", 100)
+    task["verification"] = db.verification_summary(task_id)
+    task["usage"] = db.task_usage(task_id)
     return task
 
 
@@ -141,6 +143,7 @@ class ForemanTools:
                         "base_ref": string,
                         "max_turns": integer,
                         "depends_on": {"type": "array", "items": string},
+                        "verification_commands": {"type": "array", "items": string},
                         "autostart": boolean,
                     },
                     ["repo_path", "prompt"],
@@ -149,9 +152,11 @@ class ForemanTools:
             ),
             Tool(
                 "task_list",
-                "List tasks, optionally filtered by lifecycle status.",
-                obj({"status": string, "limit": integer}),
-                lambda a: self.db.list_tasks(a.get("status"), a.get("limit", 100)),
+                "List tasks in compact operational form by default, optionally returning full task rows.",
+                obj({"status": string, "limit": integer, "compact": boolean}),
+                lambda a: self.db.list_tasks(
+                    a.get("status"), a.get("limit", 100), a.get("compact", True)
+                ),
                 read_only=True,
                 idempotent=True,
             ),
@@ -174,6 +179,7 @@ class ForemanTools:
                         "effort": {"type": "string", "enum": ["low", "medium", "high", "xhigh", "max", "ultra"]},
                         "priority": integer,
                         "max_turns": integer,
+                        "verification_commands": {"type": "array", "items": string},
                     },
                     ["task_id"],
                 ),
@@ -184,7 +190,24 @@ class ForemanTools:
                     effort=a.get("effort"),
                     priority=a.get("priority"),
                     max_turns=a.get("max_turns"),
+                    verification_commands=a.get("verification_commands"),
                 ).to_dict(),
+            ),
+            Tool(
+                "task_usage",
+                "Aggregate subscription usage by model and run for one task. Dollar values are API-equivalent estimates, not actual subscription charges.",
+                obj({"task_id": string}, ["task_id"]),
+                lambda a: self.db.task_usage(a["task_id"]),
+                read_only=True,
+                idempotent=True,
+            ),
+            Tool(
+                "goal_usage",
+                "Aggregate task and model usage for one durable goal.",
+                obj({"goal_id": string}, ["goal_id"]),
+                lambda a: self.db.goal_usage(a["goal_id"]),
+                read_only=True,
+                idempotent=True,
             ),
             Tool(
                 "task_events",
@@ -328,6 +351,7 @@ class ForemanTools:
             base_ref=args.get("base_ref", "HEAD"),
             max_turns=args.get("max_turns", 80),
             depends_on=args.get("depends_on", []),
+            verification_commands=args.get("verification_commands", []),
         )
         result = task.to_dict()
         if args.get("autostart", True):
@@ -379,15 +403,12 @@ class ForemanTools:
         )
         chunks = [diff]
         remaining = max_chars - len(diff)
-        untracked, names_truncated = _bounded_process_output(
-            ["git", "-C", task.worktree_path, "ls-files", "--others", "--exclude-standard", "-z"],
-            max(1, remaining),
-            {0},
-        )
-        names = untracked.split(b"\0")
-        if names_truncated:
-            names = names[:-1]
-        for raw_path in filter(None, names):
+        names_truncated = False
+        names = [
+            str(path).encode(errors="surrogateescape")
+            for path in snapshot["intended_untracked"]
+        ]
+        for raw_path in names:
             remaining = max_chars - sum(len(chunk) for chunk in chunks)
             if remaining <= 0:
                 truncated = True

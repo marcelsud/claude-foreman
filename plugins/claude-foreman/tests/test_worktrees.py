@@ -23,6 +23,7 @@ class WorktreeTests(unittest.TestCase):
             run("git", "init", "-q", cwd=repo)
             run("git", "config", "user.email", "test@example.com", cwd=repo)
             run("git", "config", "user.name", "Test", cwd=repo)
+            run("git", "config", "core.excludesFile", "/dev/null", cwd=repo)
             (repo / "README.md").write_text("hello\n", encoding="utf-8")
             run("git", "add", "README.md", cwd=repo)
             run("git", "commit", "-qm", "initial", cwd=repo)
@@ -96,6 +97,41 @@ class WorktreeTests(unittest.TestCase):
 
             self.assertEqual(compiled["tasks"]["verify"]["id"], second_task.id)
             self.assertEqual(first_worktree.path, second_worktree.path)
+
+    def test_snapshot_separates_sandbox_artifacts_and_counts_new_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            run("git", "init", "-q", cwd=repo)
+            run("git", "config", "user.email", "test@example.com", cwd=repo)
+            run("git", "config", "user.name", "Test", cwd=repo)
+            run("git", "config", "core.excludesFile", "/dev/null", cwd=repo)
+            (repo / "README.md").write_text("old\n", encoding="utf-8")
+            run("git", "add", "README.md", cwd=repo)
+            run("git", "commit", "-qm", "initial", cwd=repo)
+            (repo / "README.md").write_text("old\nnew\n", encoding="utf-8")
+            (repo / "new.txt").write_text("one\ntwo\n", encoding="utf-8")
+            artifact = repo / ".claude" / "settings.local.json"
+            artifact.parent.mkdir()
+            artifact.write_text("{}\n", encoding="utf-8")
+            config = ForemanConfig(
+                data_dir=repo / "data", db_path=repo / "data/state.db",
+                worktrees_dir=repo / "data/worktrees", logs_dir=repo / "data/logs",
+                pid_path=repo / "data/foremand.pid",
+            )
+
+            snapshot = WorktreeManager(config).snapshot(repo)
+
+            self.assertIn(".claude/settings.local.json", snapshot["raw_status"])
+            self.assertNotIn(".claude/settings.local.json", snapshot["intended_status"])
+            self.assertEqual(
+                [".claude/settings.local.json"], snapshot["sandbox_artifacts"]
+            )
+            new_file = next(
+                item for item in snapshot["diff_files"] if item["path"] == "new.txt"
+            )
+            self.assertEqual(2, new_file["added"])
+            self.assertTrue(new_file["untracked"])
+            self.assertIn("new.txt | +2 -0 (new)", snapshot["diff_stat"])
 
 
 if __name__ == "__main__":

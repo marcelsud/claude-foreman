@@ -1,6 +1,6 @@
 {
   "name": "claude-foreman",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Manage isolated background Claude Code and Codex workers",
   "author": {
     "name": "marcelsud",
@@ -14,7 +14,7 @@
   "interface": {
     "displayName": "Claude Foreman",
     "shortDescription": "Manage background Claude or Codex workers.",
-    "longDescription": "Queue isolated Claude Code or GPT-5.6 Codex tasks, review durable approval requests, monitor structured progress, and accept or requeue worktree results.",
+    "longDescription": "Queue isolated Claude Code or GPT-5.6 Codex tasks, monitor compact progress and native usage, run structured verification gates, review durable approvals and diffs, and accept or requeue worktree results.",
     "developerName": "marcelsud",
     "category": "Productivity",
     "capabilities": ["Interactive", "Write"],
@@ -23,6 +23,7 @@
       "Delegate this coding task to Claude Foreman.",
       "Delegate this task to gpt-5.6-terra in the background.",
       "Show pending Claude Foreman approvals.",
+      "Show compact task status and usage totals.",
       "Review the latest Claude Foreman result."
     ]
   },

@@ -36,6 +36,7 @@ class ForemanConfig:
     poll_interval: float = 2.0
     max_workers: int = 1
     approval_timeout_seconds: int = 86_400
+    verification_timeout_seconds: int = 600
     python_executable: str = sys.executable
 
     @classmethod
@@ -64,6 +65,9 @@ class ForemanConfig:
             max_workers=max(1, int(os.environ.get("FOREMAN_MAX_WORKERS", "1"))),
             approval_timeout_seconds=max(
                 30, int(os.environ.get("FOREMAN_APPROVAL_TIMEOUT_SECONDS", "86400"))
+            ),
+            verification_timeout_seconds=max(
+                10, int(os.environ.get("FOREMAN_VERIFICATION_TIMEOUT_SECONDS", "600"))
             ),
             python_executable=os.environ.get("FOREMAN_PYTHON", sys.executable),
         )

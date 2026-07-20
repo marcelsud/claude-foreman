@@ -14,6 +14,7 @@ Propose a JSON object with a description and a non-empty `tasks` array:
       "effort": "high",
       "priority": 10,
       "max_turns": 80,
+      "verification_commands": ["npm test", "npm run lint"],
       "depends_on": []
     },
     {
@@ -35,6 +36,7 @@ Rules:
 - Give every task a unique `key` and non-empty `prompt`.
 - `provider` may be `claude` or `codex`. A `gpt-5.6-*` model infers `codex`; omitting both retains the Claude Sonnet default.
 - Codex models are `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`. Do not use `ultra` with Luna.
+- `verification_commands` accepts up to 20 single routine test, lint, build, typecheck, or read-only Git commands. Shell operators and arbitrary commands are rejected.
 - Reference dependencies by task key. Dependencies must exist in the same workflow.
 - A phase may depend on at most one earlier phase, and a phase may have at most one child. This keeps each shared worktree's history linear. Use separate root chains for parallel work.
 - Use `${name}` placeholders only for values supplied to `workflow_run.inputs`.

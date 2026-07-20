@@ -10,6 +10,7 @@ from .approval_policy import auto_allow, classify_risk, request_hash
 from .config import ForemanConfig, subscription_environment
 from .database import ForemanDB
 from .models import ApprovalStatus, Task, TaskStatus
+from .usage import record_codex_usage
 
 
 class CodexUnavailable(RuntimeError):
@@ -21,7 +22,16 @@ def _redact(value: Any) -> Any:
         result: dict[str, Any] = {}
         for key, item in value.items():
             lowered = str(key).lower()
-            if any(marker in lowered for marker in ("token", "email", "credential", "secret")):
+            secret_key = (
+                lowered in {
+                    "token", "accesstoken", "access_token", "authtoken", "auth_token",
+                    "refreshtoken", "refresh_token", "apikey", "api_key",
+                }
+                or "email" in lowered
+                or "credential" in lowered
+                or "secret" in lowered
+            )
+            if secret_key:
                 result[str(key)] = "[redacted]"
             else:
                 result[str(key)] = _redact(item)
@@ -211,12 +221,25 @@ class CodexAppServerWorker:
     def _handle_notification(self, message: dict[str, Any]) -> None:
         method = str(message.get("method", "notification"))
         params = message.get("params") or {}
+        if (
+            method == "thread/tokenUsage/updated"
+            and self.task and self.run_id
+            and isinstance(params.get("tokenUsage"), dict)
+        ):
+            record_codex_usage(
+                self.db, self.task, self.run_id, params["tokenUsage"]
+            )
         self._event("codex." + method.replace("/", "."), params)
         if method == "item/completed":
             item = params.get("item") or {}
             if item.get("type") == "agentMessage" and item.get("text"):
                 self.final_result = str(item["text"])
         if method == "turn/completed" and self._completed and not self._completed.done():
+            turn = params.get("turn") or {}
+            if self.task and self.run_id and turn.get("durationMs") is not None:
+                self.db.set_run_usage_duration(
+                    self.run_id, self.task.model, int(turn["durationMs"])
+                )
             self._completed.set_result(params)
 
     async def _handle_server_request(self, message: dict[str, Any]) -> None:

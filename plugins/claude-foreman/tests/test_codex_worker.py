@@ -118,6 +118,8 @@ class CodexWorkerTests(unittest.IsolatedAsyncioTestCase):
             {"account": {"email": "[redacted]", "type": "chatgpt"}, "token": "[redacted]"},
             _redact({"account": {"email": "person@example.test", "type": "chatgpt"}, "token": "x"}),
         )
+        usage = {"total": {"inputTokens": 10, "outputTokens": 2}}
+        self.assertEqual(usage, _redact({"tokenUsage": usage})["tokenUsage"])
 
 
 if __name__ == "__main__":

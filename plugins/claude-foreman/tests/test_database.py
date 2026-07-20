@@ -86,6 +86,72 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual("codex", task.provider)
         self.assertEqual("gpt-5.6-sol", task.model)
 
+    def test_usage_aggregates_runs_models_and_goal(self) -> None:
+        goal = self.db.create_goal("Measure work")
+        task = self.db.create_task(
+            repo_path=self.temp.name, prompt="work", goal_id=goal.id
+        )
+        first_run = self.db.create_run(task.id)
+        self.db.upsert_run_usage(
+            run_id=first_run, task_id=task.id, provider="claude", model="sonnet",
+            input_tokens=10, cache_creation_input_tokens=20,
+            cache_read_input_tokens=30, output_tokens=5, total_tokens=65,
+            duration_ms=1000, api_equivalent_cost_usd=0.01,
+        )
+        second_run = self.db.create_run(task.id)
+        self.db.upsert_run_usage(
+            run_id=second_run, task_id=task.id, provider="claude", model="sonnet",
+            input_tokens=4, cache_read_input_tokens=6, output_tokens=2,
+            total_tokens=12, duration_ms=500, api_equivalent_cost_usd=0.002,
+        )
+
+        usage = self.db.task_usage(task.id)
+
+        self.assertEqual(2, len(usage["runs"]))
+        self.assertEqual(77, usage["totals"]["total_tokens"])
+        self.assertEqual(36, usage["totals"]["cache_read_input_tokens"])
+        self.assertEqual(0.012, usage["totals"]["api_equivalent_cost_usd"])
+        self.assertEqual(77, self.db.goal_usage(goal.id)["totals"]["total_tokens"])
+        self.assertTrue(usage["totals"]["cost_is_estimate"])
+
+    def test_task_list_is_compact_by_default(self) -> None:
+        task = self.db.create_task(
+            repo_path=self.temp.name,
+            prompt="large prompt " * 1000,
+            verification_commands=["git status"],
+        )
+        compact = self.db.list_tasks()
+        full = self.db.list_tasks(compact=False)
+
+        self.assertNotIn("prompt", compact[0])
+        self.assertEqual(task.id, compact[0]["id"])
+        self.assertEqual(1, compact[0]["verification"]["counts"]["pending"])
+        self.assertIn("prompt", full[0])
+
+    def test_verification_commands_are_validated_and_reconfigurable(self) -> None:
+        task = self.db.create_task(
+            repo_path=self.temp.name,
+            prompt="work",
+            verification_commands=["python3 -m unittest", "git status"],
+        )
+        self.assertEqual(
+            ["python3 -m unittest", "git status"],
+            [gate["command"] for gate in self.db.verification_gates(task.id)],
+        )
+        self.db.configure_queued_task(
+            task.id, verification_commands=["pytest tests"]
+        )
+        self.assertEqual(
+            ["pytest tests"],
+            [gate["command"] for gate in self.db.verification_gates(task.id)],
+        )
+        with self.assertRaises(ValueError):
+            self.db.create_task(
+                repo_path=self.temp.name,
+                prompt="unsafe",
+                verification_commands=["npm test; curl example.com"],
+            )
+
     def test_approval_is_hash_bound_and_single_use(self) -> None:
         task = self.db.create_task(repo_path=self.temp.name, prompt="do work")
         payload = {"command": "npm test"}

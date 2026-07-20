@@ -69,11 +69,14 @@ The installed bridge uses `~/.local/share/claude-foreman/runtime`, injects its o
 ## Control model
 
 - Goals group durable outcomes; tasks carry a repository, prompt, provider, model, effort, turn budget, and dependencies. Queued tasks can be retuned with `task_configure` before the scheduler claims them.
+- `task_list` returns compact operational rows by default; `compact: false` preserves access to complete task rows. `task_get` remains the detailed task view.
+- `task_usage` and `goal_usage` aggregate new input, cache creation/read, output, reasoning output, total tokens, duration, and provider-reported API-equivalent estimates across retries and requeues.
 - The detached scheduler atomically claims ready tasks from SQLite and records structured progress events.
 - Codex reads events, answers scoped approval requests, reviews the worktree diff, then accepts or requeues the task.
 - Clarifying questions are durable approval records; Codex returns structured selections through `approval_decide.answers`, allowing either paused worker to resume.
 - `task_cancel` interrupts an active SDK query. Stopping the daemon cancels its active workers before exiting.
 - Reviewed workflows compile into dependency-gated phases. A linear phase chain shares one isolated worktree so later phases see accepted earlier changes.
+- Declared `verification_commands` run after the worker through Codex App Server `command/exec`, with argv-only execution, `workspaceWrite`, network disabled, bounded output, and timeout. Results are durable and tied to a worktree fingerprint.
 - Workflow versions are immutable and cannot run until Codex explicitly activates the reviewed version.
 
 ## Safety defaults
@@ -83,6 +86,7 @@ The installed bridge uses `~/.local/share/claude-foreman/runtime`, injects its o
 - Bash runs in Claude's sandbox with network denied, local binding denied, and unsandboxed commands disabled.
 - On Linux/WSL, startup fails closed unless both `bubblewrap` (`bwrap`) and `socat` are installed; Foreman never accepts Claude Code's unsandboxed fallback.
 - Codex runs through App Server with `workspace-write`, `on-request` approvals, no model fallback, and no environment capabilities. Foreman verifies ChatGPT authentication and the selected model/effort against the live model catalog before starting the turn.
+- Worktree snapshots expose `raw_status`, filtered `intended_status`, separately listed sandbox artifacts, and per-file stats that include untracked files.
 - App Server approvals are exact and single-use. Foreman never returns `acceptForSession` or persists a relaxed permission rule.
 - External paths, web/MCP access, destructive commands, Git commits/publication, and questions become exact hash-bound approval requests.
 - Force-push, merge, deployment, infrastructure apply, and sandbox bypass additionally require explicit human confirmation.
