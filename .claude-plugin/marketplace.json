@@ -11,7 +11,7 @@
       "source": "./plugins/foreman",
       "displayName": "Foreman",
       "description": "Manage isolated background Claude Code and Codex workers",
-      "version": "0.4.1",
+      "version": "0.4.2",
       "author": {
         "name": "marcelsud"
       },

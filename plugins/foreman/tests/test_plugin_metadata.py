@@ -25,8 +25,13 @@ class DualPluginMetadataTests(unittest.TestCase):
         self.assertEqual("foreman", codex["name"])
         self.assertEqual(codex["name"], claude["name"])
         self.assertEqual(codex["version"], claude["version"])
-        self.assertEqual(codex["version"], project["project"]["version"])
         self.assertEqual(codex["version"], __version__)
+        self.assertNotIn("version", project["project"])
+        self.assertEqual(["version"], project["project"]["dynamic"])
+        self.assertEqual(
+            {"attr": "foreman.__version__"},
+            project["tool"]["setuptools"]["dynamic"]["version"],
+        )
         self.assertEqual(
             "https://github.com/marcelsud/claude-foreman",
             codex["repository"],
@@ -56,6 +61,7 @@ class DualPluginMetadataTests(unittest.TestCase):
         entry = marketplace["plugins"][0]
         self.assertEqual("foreman", entry["name"])
         self.assertEqual("./plugins/foreman", entry["source"])
+        self.assertEqual(__version__, entry["version"])
 
 
 if __name__ == "__main__":

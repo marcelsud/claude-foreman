@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from foreman import __version__
 from foreman.approval_policy import request_hash
 from foreman.config import ForemanConfig
 from foreman.mcp_server import ForemanTools, MCPServer
@@ -41,7 +42,7 @@ class MCPTests(unittest.TestCase):
             {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}}
         )
         self.assertEqual("foreman", initialized["result"]["serverInfo"]["name"])
-        self.assertEqual("0.4.1", initialized["result"]["serverInfo"]["version"])
+        self.assertEqual(__version__, initialized["result"]["serverInfo"]["version"])
         listed = self.server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
         names = {item["name"] for item in listed["result"]["tools"]}
         self.assertIn("task_create", names)
