@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "foreman",
   "displayName": "Foreman",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Manage isolated background Claude Code and Codex workers",
   "author": {
     "name": "marcelsud"

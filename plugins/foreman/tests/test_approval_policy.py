@@ -37,10 +37,28 @@ class ApprovalPolicyTests(unittest.TestCase):
             self.assertEqual("high", risk)
             self.assertFalse(auto_allow("Edit", outside, root, risk))
 
+            multiple = {
+                "paths": [str(root / "inside.txt"), str(root.parent / "outside.txt")]
+            }
+            risk = classify_risk("Edit", multiple, root)
+            self.assertEqual("high", risk)
+            self.assertFalse(auto_allow("Edit", multiple, root, risk))
+
+            grant_root = {
+                "paths": [str(root / "inside.txt")],
+                "grant_root": str(root.parent),
+            }
+            self.assertEqual("high", classify_risk("Edit", grant_root, root))
+
             credentials = {"file_path": "~/.claude/.credentials.json"}
             risk = classify_risk("Read", credentials, root)
             self.assertEqual("high", risk)
             self.assertTrue(human_only(risk, "Read", credentials))
+
+            multiple_with_credentials = {
+                "paths": [str(root / "inside.txt"), "~/.codex/auth.json"]
+            }
+            self.assertTrue(human_only("high", "Edit", multiple_with_credentials))
 
             shell_credentials = {"command": "cat ~/.claude/.credentials.json"}
             risk = classify_risk("Bash", shell_credentials, root)

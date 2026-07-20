@@ -14,6 +14,10 @@ Thanks for helping improve Foreman.
 
 Keep changes focused and include tests for behavior changes. Never add API keys, OAuth tokens, state databases, daemon logs, or active worktrees to commits.
 
+## Versioning
+
+`plugins/foreman/src/foreman/__init__.py` is the single source of truth for the Foreman version. After changing `__version__`, run `python scripts/sync_version.py` from `plugins/foreman` to update the generated Codex, Claude Code, and marketplace metadata. CI runs the same command with `--check` and rejects unsynchronized versions.
+
 ## Pull requests
 
 Describe the problem, the chosen approach, safety implications, and verification performed. Changes to approval policy, sandboxing, authentication, or destructive-action handling should include explicit regression tests.

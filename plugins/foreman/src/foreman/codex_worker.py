@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +73,120 @@ def _redact(value: Any) -> Any:
     return value
 
 
+def _required_protocol_id(params: dict[str, Any], name: str) -> str:
+    value = params.get(name)
+    if not isinstance(value, str) or not value.strip():
+        raise RuntimeError(f"Codex file-change approval is missing {name}")
+    return value
+
+
+def _normalized_path(value: Any, worktree: Path, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise RuntimeError(f"Codex file-change approval has no concrete {field}")
+    try:
+        path = Path(value).expanduser()
+        return str((worktree / path).resolve() if not path.is_absolute() else path.resolve())
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"Codex file-change approval has an invalid {field}") from exc
+
+
+def _file_change_approval_input(
+    params: dict[str, Any], item: dict[str, Any], worktree: Path
+) -> dict[str, Any]:
+    """Bind an approval to its correlated file-change item and patch content."""
+    thread_id = _required_protocol_id(params, "threadId")
+    turn_id = _required_protocol_id(params, "turnId")
+    item_id = _required_protocol_id(params, "itemId")
+    if item.get("type") != "fileChange" or item.get("id") != item_id:
+        raise RuntimeError("Codex file-change approval does not match its correlated item")
+
+    started_at_ms = params.get("startedAtMs")
+    if isinstance(started_at_ms, bool) or not isinstance(started_at_ms, int):
+        raise RuntimeError("Codex file-change approval is missing startedAtMs")
+
+    raw_changes = item.get("changes")
+    if not isinstance(raw_changes, list) or not raw_changes:
+        raise RuntimeError("Codex file-change approval has no concrete changes")
+
+    canonical_changes: list[dict[str, Any]] = []
+    change_summaries: list[dict[str, Any]] = []
+    paths: list[str] = []
+    for raw_change in raw_changes:
+        if not isinstance(raw_change, dict):
+            raise RuntimeError("Codex file-change approval contains an invalid change")
+        path = _normalized_path(raw_change.get("path"), worktree, "target path")
+        kind_value = raw_change.get("kind")
+        if isinstance(kind_value, dict):
+            kind = kind_value.get("type")
+            move_value = kind_value.get("move_path", kind_value.get("movePath"))
+        else:
+            kind = kind_value
+            move_value = None
+        if not isinstance(kind, str) or not kind.strip():
+            raise RuntimeError("Codex file-change approval contains an invalid change kind")
+        move_path = (
+            _normalized_path(move_value, worktree, "move path")
+            if move_value is not None
+            else None
+        )
+        diff = raw_change.get("diff")
+        if not isinstance(diff, str):
+            raise RuntimeError("Codex file-change approval contains no patch diff")
+
+        canonical_change = {
+            "path": path,
+            "kind": kind,
+            "move_path": move_path,
+            "diff": diff,
+        }
+        canonical_changes.append(canonical_change)
+        change_summaries.append(
+            {
+                "path": path,
+                "kind": kind,
+                "move_path": move_path,
+                "diff_sha256": sha256(diff.encode()).hexdigest(),
+            }
+        )
+        for candidate in (path, move_path):
+            if candidate is not None and candidate not in paths:
+                paths.append(candidate)
+
+    raw_reason = params.get("reason")
+    if raw_reason is not None and not isinstance(raw_reason, str):
+        raise RuntimeError("Codex file-change approval contains an invalid reason")
+    reason = (raw_reason or "").strip()
+    if not reason:
+        reason = f"Apply Codex file-change patch {item_id} to {', '.join(paths)}"
+
+    grant_root_value = params.get("grantRoot")
+    grant_root = (
+        _normalized_path(grant_root_value, worktree, "grant root")
+        if grant_root_value is not None
+        else None
+    )
+    canonical_patch = json.dumps(
+        canonical_changes,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    input_data: dict[str, Any] = {
+        "paths": paths,
+        "reason": reason,
+        "grant_root": grant_root,
+        "thread_id": thread_id,
+        "turn_id": turn_id,
+        "item_id": item_id,
+        "started_at_ms": started_at_ms,
+        "changes": change_summaries,
+        "patch_sha256": sha256(canonical_patch.encode()).hexdigest(),
+    }
+    if len(paths) == 1:
+        input_data["path"] = paths[0]
+    return input_data
+
+
 class CodexAppServerWorker:
     """One-task Codex App Server client using the user's saved ChatGPT login."""
 
@@ -92,6 +207,7 @@ class CodexAppServerWorker:
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
         self._server_requests: set[asyncio.Task[None]] = set()
+        self._file_changes: dict[tuple[str, str, str], dict[str, Any]] = {}
 
     async def query(self, task: Task, run_id: str, worktree: Path) -> str | None:
         codex = shutil.which("codex")
@@ -252,6 +368,21 @@ class CodexAppServerWorker:
     def _handle_notification(self, message: dict[str, Any]) -> None:
         method = str(message.get("method", "notification"))
         params = message.get("params") or {}
+        item = params.get("item") or {}
+        file_change_key: tuple[str, str, str] | None = None
+        if method in {"item/started", "item/completed"} and item.get("type") == "fileChange":
+            thread_id = params.get("threadId")
+            turn_id = params.get("turnId")
+            item_id = item.get("id")
+            if all(isinstance(value, str) and value for value in (thread_id, turn_id, item_id)):
+                file_change_key = (thread_id, turn_id, item_id)
+                if method == "item/started":
+                    self._file_changes[file_change_key] = item
+            else:
+                self._event(
+                    "codex.protocol_error",
+                    {"method": method, "message": "fileChange notification is missing identifiers"},
+                )
         if (
             method == "thread/tokenUsage/updated"
             and self.task and self.run_id
@@ -262,15 +393,23 @@ class CodexAppServerWorker:
             )
         self._event("codex." + method.replace("/", "."), params)
         if method == "item/completed":
-            item = params.get("item") or {}
             if item.get("type") == "agentMessage" and item.get("text"):
                 self.final_result = str(item["text"])
+            if file_change_key is not None:
+                self._file_changes.pop(file_change_key, None)
         if method == "turn/completed" and self._completed and not self._completed.done():
             turn = params.get("turn") or {}
             if self.task and self.run_id and turn.get("durationMs") is not None:
                 self.db.set_run_usage_duration(
                     self.run_id, self.task.model, int(turn["durationMs"])
                 )
+            thread_id = params.get("threadId")
+            turn_id = turn.get("id")
+            self._file_changes = {
+                key: value
+                for key, value in self._file_changes.items()
+                if key[:2] != (thread_id, turn_id)
+            }
             self._completed.set_result(params)
 
     async def _handle_server_request(self, message: dict[str, Any]) -> None:
@@ -283,6 +422,7 @@ class CodexAppServerWorker:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            self._event("codex.protocol_error", {"method": method, "message": str(exc)})
             await self._send(
                 {"id": request_id, "error": {"code": -32000, "message": str(exc)}}
             )
@@ -306,7 +446,17 @@ class CodexAppServerWorker:
             return {"decision": "accept" if approved else "decline"}
         if method == "item/fileChange/requestApproval":
             tool_name = "Edit"
-            input_data = {"path": params.get("grantRoot"), "reason": params.get("reason")}
+            key = (
+                _required_protocol_id(params, "threadId"),
+                _required_protocol_id(params, "turnId"),
+                _required_protocol_id(params, "itemId"),
+            )
+            item = self._file_changes.get(key)
+            if item is None:
+                raise RuntimeError(
+                    "Codex file-change approval cannot be correlated with its fileChange item"
+                )
+            input_data = _file_change_approval_input(params, item, self.worktree)
             risk = classify_risk(tool_name, input_data, self.worktree)
             approved, _ = await self._wait_for_approval(tool_name, input_data, risk)
             return {"decision": "accept" if approved else "decline"}
