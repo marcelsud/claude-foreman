@@ -81,6 +81,16 @@ def request_hash(task_id: str, tool_name: str, input_data: dict[str, Any]) -> st
     return sha256(canonical.encode()).hexdigest()
 
 
+def _approval_paths(input_data: dict[str, Any]) -> list[Any]:
+    values = input_data.get("paths")
+    paths = list(values) if isinstance(values, list) else []
+    for key in ("file_path", "path", "grant_root", "grantRoot"):
+        value = input_data.get(key)
+        if value and value not in paths:
+            paths.append(value)
+    return paths
+
+
 def classify_risk(tool_name: str, input_data: dict[str, Any], worktree: str | Path) -> str:
     if tool_name == "AskUserQuestion":
         return "needs_input"
@@ -93,14 +103,13 @@ def classify_risk(tool_name: str, input_data: dict[str, Any], worktree: str | Pa
         if any(marker in command for marker in HIGH_RISK_COMMAND_MARKERS) or sensitive_reference(command):
             return "high"
         return "medium"
-    path_value = input_data.get("file_path") or input_data.get("path")
-    if path_value:
+    for path_value in _approval_paths(input_data):
         try:
             root = Path(worktree).resolve()
             path = Path(path_value).expanduser()
             path = (root / path).resolve() if not path.is_absolute() else path.resolve()
             path.relative_to(root)
-        except (ValueError, OSError):
+        except (TypeError, ValueError, OSError):
             return "high"
     return "medium"
 
@@ -127,5 +136,4 @@ def human_only(risk: str, tool_name: str, input_data: dict[str, Any]) -> bool:
         )
     if tool_name == "AskUserQuestion":
         return any(bool(question.get("isSecret")) for question in input_data.get("questions", []))
-    path_value = input_data.get("file_path") or input_data.get("path")
-    return bool(path_value and sensitive_reference(str(path_value)))
+    return any(sensitive_reference(str(path)) for path in _approval_paths(input_data))
