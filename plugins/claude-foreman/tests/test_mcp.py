@@ -46,6 +46,10 @@ class MCPTests(unittest.TestCase):
         self.assertIn("task_create", names)
         self.assertIn("approval_decide", names)
         self.assertIn("workflow_run", names)
+        create = next(item for item in listed["result"]["tools"] if item["name"] == "task_create")
+        properties = create["inputSchema"]["properties"]
+        self.assertEqual(["claude", "codex"], properties["provider"]["enum"])
+        self.assertIn("ultra", properties["effort"]["enum"])
 
     def test_goal_and_task_roundtrip_without_autostart(self) -> None:
         goal = self.call("goal_create", {"title": "Test goal", "description": "demo"})
@@ -61,6 +65,21 @@ class MCPTests(unittest.TestCase):
         fetched = self.call("task_get", {"task_id": task["id"]})
         self.assertEqual("queued", fetched["status"])
         self.assertEqual(goal["id"], fetched["goal_id"])
+
+    def test_codex_task_roundtrip(self) -> None:
+        task = self.call(
+            "task_create",
+            {
+                "repo_path": self.temp.name,
+                "prompt": "Do something",
+                "provider": "codex",
+                "model": "gpt-5.6-terra",
+                "effort": "high",
+                "autostart": False,
+            },
+        )
+        self.assertEqual("codex", task["provider"])
+        self.assertEqual("gpt-5.6-terra", task["model"])
 
     def test_task_diff_includes_untracked_files_and_is_bounded(self) -> None:
         repo = self.data / "repo"

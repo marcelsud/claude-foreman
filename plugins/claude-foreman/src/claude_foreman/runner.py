@@ -15,7 +15,7 @@ from .worktrees import WorktreeManager
 
 
 WORKER_POLICY = """
-You are an implementation worker managed by Codex through Claude Foreman.
+You are an implementation worker managed by Codex through Foreman.
 Work only on the assigned task inside the current Git worktree.
 Do not commit, push, merge, deploy, change credentials, disable the sandbox, or edit Foreman policy.
 Do not read credential files, authentication tokens, shell profiles, browser data, or unrelated repositories.
@@ -48,9 +48,12 @@ class ClaudeWorker:
 
     async def run(self, task: Task) -> None:
         run_id = self.db.create_run(task.id)
-        self.db.add_event(task.id, run_id, "run.started", {"model": task.model, "effort": task.effort})
+        self.db.add_event(
+            task.id, run_id, "run.started",
+            {"provider": task.provider, "model": task.model, "effort": task.effort},
+        )
         try:
-            missing = missing_sandbox_dependencies()
+            missing = missing_sandbox_dependencies() if task.provider == "claude" else []
             if missing:
                 raise WorkerUnavailable(
                     "refusing to run without the Claude Bash sandbox; missing: " + ", ".join(missing)
@@ -66,6 +69,7 @@ class ClaudeWorker:
                 branch_name=worktree.branch,
                 worktree_path=str(worktree.path),
                 claude_session_id=None,
+                worker_session_id=None,
                 error=None,
                 completed_at=None,
             )
@@ -89,7 +93,7 @@ class ClaudeWorker:
             self.db.update_task(
                 task.id,
                 status=TaskStatus.AWAITING_REVIEW,
-                result_summary=result or "Claude finished without a textual summary.",
+                result_summary=result or f"{task.provider.title()} finished without a textual summary.",
             )
             self.db.close_pending_approvals(run_id, "run finished")
             self.db.finish_run(run_id, "awaiting_review", 0, None)
@@ -129,6 +133,15 @@ class ClaudeWorker:
             self.db.add_event(task.id, run_id, f"run.{run_status}", {"error": message})
 
     async def _query(self, task: Task, run_id: str, worktree: Path) -> str | None:
+        if task.provider == "codex":
+            from .codex_worker import CodexAppServerWorker
+
+            return await CodexAppServerWorker(
+                self.config, self.db, WORKER_POLICY
+            ).query(task, run_id, worktree)
+        return await self._query_claude(task, run_id, worktree)
+
+    async def _query_claude(self, task: Task, run_id: str, worktree: Path) -> str | None:
         enforce_subscription_environment()
         try:
             from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
@@ -282,7 +295,11 @@ class ClaudeWorker:
             payload = _jsonable(message)
             session_id = getattr(message, "session_id", None)
             if session_id:
-                self.db.update_task(task.id, claude_session_id=str(session_id))
+                self.db.update_task(
+                    task.id,
+                    claude_session_id=str(session_id),
+                    worker_session_id=str(session_id),
+                )
             self.db.add_event(
                 task.id,
                 run_id,

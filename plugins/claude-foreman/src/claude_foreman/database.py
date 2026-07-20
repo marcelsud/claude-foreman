@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterator
 
-from .models import ApprovalStatus, Goal, GoalStatus, Task, TaskStatus
+from .models import ApprovalStatus, Goal, GoalStatus, Task, TaskStatus, resolve_worker_config
 
 
 SCHEMA = """
@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     prompt TEXT NOT NULL,
     status TEXT NOT NULL,
     priority INTEGER NOT NULL DEFAULT 0,
+    provider TEXT NOT NULL DEFAULT 'claude',
     model TEXT NOT NULL DEFAULT 'sonnet',
     effort TEXT NOT NULL DEFAULT 'medium',
     base_ref TEXT NOT NULL DEFAULT 'HEAD',
@@ -36,6 +37,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     branch_name TEXT,
     worktree_path TEXT,
     claude_session_id TEXT,
+    worker_session_id TEXT,
     max_turns INTEGER NOT NULL DEFAULT 80,
     error TEXT,
     result_summary TEXT,
@@ -132,6 +134,14 @@ class ForemanDB:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
             if "workspace_group" not in columns:
                 conn.execute("ALTER TABLE tasks ADD COLUMN workspace_group TEXT")
+            if "provider" not in columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude'")
+            if "worker_session_id" not in columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN worker_session_id TEXT")
+                conn.execute(
+                    "UPDATE tasks SET worker_session_id=claude_session_id "
+                    "WHERE claude_session_id IS NOT NULL"
+                )
             approval_columns = {
                 row["name"] for row in conn.execute("PRAGMA table_info(approvals)")
             }
@@ -207,18 +217,15 @@ class ForemanDB:
         prompt: str,
         goal_id: str | None = None,
         priority: int = 0,
-        model: str = "sonnet",
+        provider: str | None = None,
+        model: str | None = None,
         effort: str = "medium",
         base_ref: str = "HEAD",
         max_turns: int = 80,
         depends_on: list[str] | None = None,
         workspace_group: str | None = None,
     ) -> Task:
-        if effort not in {"low", "medium", "high", "xhigh", "max"}:
-            raise ValueError(f"invalid effort: {effort}")
-        if not model.strip():
-            raise ValueError("model must not be empty")
-        model = model.strip()
+        provider, model, effort = resolve_worker_config(provider, model, effort)
         if not prompt.strip():
             raise ValueError("prompt must not be empty")
         task_id = str(uuid.uuid4())
@@ -228,9 +235,9 @@ class ForemanDB:
                 raise KeyError(f"goal not found: {goal_id}")
             conn.execute(
                 """INSERT INTO tasks (
-                    id, goal_id, repo_path, prompt, status, priority, model, effort,
+                    id, goal_id, repo_path, prompt, status, priority, provider, model, effort,
                     base_ref, workspace_group, max_turns, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     task_id,
                     goal_id,
@@ -238,6 +245,7 @@ class ForemanDB:
                     prompt.strip(),
                     TaskStatus.QUEUED,
                     int(priority),
+                    provider,
                     model,
                     effort,
                     base_ref,
@@ -252,7 +260,10 @@ class ForemanDB:
                     "INSERT INTO task_dependencies(task_id, depends_on) VALUES (?, ?)",
                     (task_id, dep),
                 )
-        self.add_event(task_id, None, "task.created", {"model": model, "effort": effort})
+        self.add_event(
+            task_id, None, "task.created",
+            {"provider": provider, "model": model, "effort": effort},
+        )
         return self.get_task(task_id)
 
     def get_task(self, task_id: str) -> Task:
@@ -333,7 +344,8 @@ class ForemanDB:
 
     def update_task(self, task_id: str, **fields: Any) -> Task:
         allowed = {
-            "status", "branch_name", "worktree_path", "claude_session_id", "error",
+            "status", "branch_name", "worktree_path", "claude_session_id",
+            "worker_session_id", "error",
             "result_summary", "cancel_requested", "started_at", "completed_at",
         }
         unknown = set(fields) - allowed
@@ -354,6 +366,7 @@ class ForemanDB:
         self,
         task_id: str,
         *,
+        provider: str | None = None,
         model: str | None = None,
         effort: str | None = None,
         priority: int | None = None,
@@ -363,14 +376,24 @@ class ForemanDB:
         if task.status != TaskStatus.QUEUED:
             raise ValueError(f"only queued tasks can be reconfigured, not {task.status}")
         changes: dict[str, Any] = {}
-        if model is not None:
-            if not model.strip():
-                raise ValueError("model must not be empty")
-            changes["model"] = model.strip()
-        if effort is not None:
-            if effort not in {"low", "medium", "high", "xhigh", "max"}:
-                raise ValueError(f"invalid effort: {effort}")
-            changes["effort"] = effort
+        if provider is not None or model is not None or effort is not None:
+            target_provider = provider or task.provider
+            target_model = model
+            if provider is None and model is None:
+                target_model = task.model
+            elif provider is None and model is not None:
+                target_provider = None
+            elif provider is not None and model is None:
+                target_model = task.model if provider == task.provider else None
+            target_effort = effort or (
+                task.effort if provider is None or provider == task.provider else "medium"
+            )
+            resolved_provider, resolved_model, resolved_effort = resolve_worker_config(
+                target_provider, target_model, target_effort
+            )
+            changes.update(
+                provider=resolved_provider, model=resolved_model, effort=resolved_effort
+            )
         if priority is not None:
             changes["priority"] = int(priority)
         if max_turns is not None:
@@ -750,6 +773,9 @@ class ForemanDB:
         for item in tasks:
             if not isinstance(item, dict) or not item.get("key") or not item.get("prompt"):
                 raise ValueError("each workflow task requires key and prompt")
+            resolve_worker_config(
+                item.get("provider"), item.get("model"), item.get("effort", "medium")
+            )
             if item["key"] in keys:
                 raise ValueError(f"duplicate workflow task key: {item['key']}")
             keys.add(item["key"])
@@ -877,7 +903,8 @@ class ForemanDB:
                 prompt=prompt,
                 goal_id=goal_id,
                 priority=int(spec.get("priority", 0)),
-                model=spec.get("model", "sonnet"),
+                provider=spec.get("provider"),
+                model=spec.get("model"),
                 effort=spec.get("effort", "medium"),
                 base_ref=spec.get("base_ref", "HEAD"),
                 max_turns=int(spec.get("max_turns", 80)),

@@ -20,12 +20,18 @@ SENSITIVE_MARKERS = (
     "~/.aws",
     "/.claude/",
     "~/.claude",
+    "/.codex/",
+    "~/.codex",
     "credentials",
+    "auth.json",
     "id_rsa",
     "id_ed25519",
     "private_key",
     "anthropic_api_key",
     "anthropic_auth_token",
+    "openai_api_key",
+    "codex_api_key",
+    "codex_access_token",
 )
 
 
@@ -119,5 +125,7 @@ def human_only(risk: str, tool_name: str, input_data: dict[str, Any]) -> bool:
             marker in command
             for marker in ("git push --force", "git push -f", "gh pr merge", "deploy", "terraform apply")
         )
+    if tool_name == "AskUserQuestion":
+        return any(bool(question.get("isSecret")) for question in input_data.get("questions", []))
     path_value = input_data.get("file_path") or input_data.get("path")
     return bool(path_value and sensitive_reference(str(path_value)))

@@ -1,22 +1,22 @@
 ---
 name: manage-claude-foreman
-description: Manage background Claude Code implementation work through the Claude Foreman MCP tools. Use when Codex needs to create goals, delegate isolated Git-worktree tasks to Claude, choose a Claude model or effort level, monitor structured progress, decide routine approval requests, escalate dangerous actions to the user, review diffs, request rework, accept results, or create and review reusable multi-phase Claude workflows.
+description: Manage background Claude Code or Codex implementation work through the Claude Foreman MCP tools. Use when Codex needs to create goals, delegate isolated Git-worktree tasks, choose a provider, model, or effort level, monitor structured progress, decide routine approval requests, escalate dangerous actions to the user, review diffs, request rework, accept results, or create and review reusable multi-phase workflows.
 ---
 
 # Manage Claude Foreman
 
-Use Claude as an implementation worker and keep Codex responsible for scope, approvals, and final review.
+Use Claude or Codex as an implementation worker and keep the managing Codex task responsible for scope, approvals, and final review.
 
 ## Delegate work
 
-1. Call `doctor` before the first task in a session. Require `auth_mode: subscription`; never request or configure an Anthropic API key.
+1. Call `doctor` before the first task in a session. Require `auth_mode: subscription` and confirm the chosen provider is ready; never request or configure an Anthropic or OpenAI API key.
 2. Create a goal for multi-task outcomes. For one atomic task, call `task_create` directly.
-3. Supply an absolute Git repository path, a concrete completion condition, model, effort, and relevant verification commands in the prompt.
+3. Supply an absolute Git repository path, a concrete completion condition, provider, model, effort, and relevant verification commands in the prompt.
    Use `task_configure` to retune a queued task; never change model or effort after it has been claimed.
 4. Keep unrelated tasks in separate worktrees. Use dependencies when one task needs an accepted result from another.
 5. Start the daemon only when queued work should run.
 
-Use `sonnet` with `medium` effort for routine implementation, `high` for complex implementation, and `opus` with `xhigh` only for unusually difficult work. Preserve an explicit user choice.
+For Claude, use `sonnet` with `medium` effort for routine implementation and `opus` only for unusually difficult work. For Codex, choose `gpt-5.6-terra` for balanced everyday work, `gpt-5.6-sol` for the hardest work, or `gpt-5.6-luna` for the fastest iteration. Sol and Terra support through `ultra`; Luna supports through `max`. Preserve an explicit user choice.
 
 ## Monitor and unblock
 
@@ -30,7 +30,7 @@ For each pending approval:
 4. Reject scope expansion, credential access, sandbox bypass, policy edits, unexplained network access, and destructive commands. Include a useful alternative in the rejection message.
 5. Ask the user before any human-only action. Only pass `human_confirmed: true` after explicit confirmation for that exact action.
 
-For `AskUserQuestion`, present Claude's exact questions and options. Approve with an `answers` object whose keys exactly match the question text; Foreman returns those structured answers to the paused SDK callback. Do not treat a plain approval message as an answer.
+For `AskUserQuestion`, present the worker's exact questions and options. Approve with an `answers` object whose keys exactly match the question text; Foreman returns those structured answers to the paused worker. Do not treat a plain approval message as an answer.
 
 Read [approval-policy.md](references/approval-policy.md) when an approval is ambiguous.
 

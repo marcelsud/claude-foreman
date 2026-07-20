@@ -93,7 +93,7 @@ class ForemanTools:
         tools = [
             Tool(
                 "doctor",
-                "Check Foreman, Git, Claude subscription authentication, and SDK readiness without exposing credentials.",
+                "Check Foreman, Git, Claude and ChatGPT subscription authentication, and worker readiness without exposing credentials.",
                 obj(),
                 lambda _: run_doctor(self.config),
                 read_only=True,
@@ -128,15 +128,16 @@ class ForemanTools:
             ),
             Tool(
                 "task_create",
-                "Queue an isolated Claude coding task in a Git repository and optionally start the scheduler.",
+                "Queue an isolated Claude or Codex coding task in a Git repository and optionally start the scheduler.",
                 obj(
                     {
                         "repo_path": string,
                         "prompt": string,
                         "goal_id": string,
                         "priority": integer,
+                        "provider": {"type": "string", "enum": ["claude", "codex"]},
                         "model": string,
-                        "effort": {"type": "string", "enum": ["low", "medium", "high", "xhigh", "max"]},
+                        "effort": {"type": "string", "enum": ["low", "medium", "high", "xhigh", "max", "ultra"]},
                         "base_ref": string,
                         "max_turns": integer,
                         "depends_on": {"type": "array", "items": string},
@@ -164,12 +165,13 @@ class ForemanTools:
             ),
             Tool(
                 "task_configure",
-                "Change the model, effort, priority, or turn budget of a task while it is still queued.",
+                "Change the provider, model, effort, priority, or turn budget of a task while it is still queued.",
                 obj(
                     {
                         "task_id": string,
+                        "provider": {"type": "string", "enum": ["claude", "codex"]},
                         "model": string,
-                        "effort": {"type": "string", "enum": ["low", "medium", "high", "xhigh", "max"]},
+                        "effort": {"type": "string", "enum": ["low", "medium", "high", "xhigh", "max", "ultra"]},
                         "priority": integer,
                         "max_turns": integer,
                     },
@@ -177,6 +179,7 @@ class ForemanTools:
                 ),
                 lambda a: self.db.configure_queued_task(
                     a["task_id"],
+                    provider=a.get("provider"),
                     model=a.get("model"),
                     effort=a.get("effort"),
                     priority=a.get("priority"),
@@ -232,7 +235,7 @@ class ForemanTools:
             ),
             Tool(
                 "approval_decide",
-                "Allow or reject one exact, hash-bound Claude tool request. Critical actions require human_confirmed=true.",
+                "Allow or reject one exact, hash-bound worker request. Critical actions require human_confirmed=true.",
                 obj(
                     {
                         "approval_id": string,
@@ -319,7 +322,8 @@ class ForemanTools:
             prompt=args["prompt"],
             goal_id=args.get("goal_id"),
             priority=args.get("priority", 0),
-            model=args.get("model", "sonnet"),
+            provider=args.get("provider"),
+            model=args.get("model"),
             effort=args.get("effort", "medium"),
             base_ref=args.get("base_ref", "HEAD"),
             max_turns=args.get("max_turns", 80),

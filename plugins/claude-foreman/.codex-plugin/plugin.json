@@ -1,7 +1,7 @@
 {
   "name": "claude-foreman",
-  "version": "0.1.0",
-  "description": "Manage isolated background Claude Code workers from Codex",
+  "version": "0.2.0",
+  "description": "Manage isolated background Claude Code and Codex workers",
   "author": {
     "name": "marcelsud",
     "url": "https://github.com/marcelsud"
@@ -9,18 +9,19 @@
   "homepage": "https://github.com/marcelsud/claude-foreman",
   "repository": "https://github.com/marcelsud/claude-foreman",
   "license": "MIT",
-  "keywords": ["codex", "claude-code", "background-agent", "worktrees"],
+  "keywords": ["codex", "gpt-5.6", "claude-code", "background-agent", "worktrees"],
   "skills": "./skills/",
   "interface": {
     "displayName": "Claude Foreman",
-    "shortDescription": "Manage background Claude coding workers.",
-    "longDescription": "Queue isolated Claude Code tasks, review durable approval requests, monitor structured progress, and accept or requeue worktree results from Codex.",
+    "shortDescription": "Manage background Claude or Codex workers.",
+    "longDescription": "Queue isolated Claude Code or GPT-5.6 Codex tasks, review durable approval requests, monitor structured progress, and accept or requeue worktree results.",
     "developerName": "marcelsud",
     "category": "Productivity",
     "capabilities": ["Interactive", "Write"],
     "websiteURL": "https://github.com/marcelsud/claude-foreman",
     "defaultPrompt": [
       "Delegate this coding task to Claude Foreman.",
+      "Delegate this task to gpt-5.6-terra in the background.",
       "Show pending Claude Foreman approvals.",
       "Review the latest Claude Foreman result."
     ]

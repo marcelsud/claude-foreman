@@ -51,6 +51,41 @@ class DatabaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.db.configure_queued_task(task.id, model="sonnet")
 
+    def test_codex_models_infer_provider_and_validate_effort(self) -> None:
+        sol = self.db.create_task(
+            repo_path=self.temp.name,
+            prompt="deep work",
+            model="gpt-5.6-sol",
+            effort="ultra",
+        )
+        self.assertEqual("codex", sol.provider)
+        self.assertEqual("gpt-5.6-sol", sol.model)
+        switched = self.db.configure_queued_task(sol.id, provider="claude")
+        self.assertEqual("claude", switched.provider)
+        self.assertEqual("sonnet", switched.model)
+        self.assertEqual("medium", switched.effort)
+        with self.assertRaises(ValueError):
+            self.db.create_task(
+                repo_path=self.temp.name,
+                prompt="too much",
+                model="gpt-5.6-luna",
+                effort="ultra",
+            )
+        with self.assertRaises(ValueError):
+            self.db.create_task(
+                repo_path=self.temp.name,
+                prompt="mismatch",
+                provider="claude",
+                model="gpt-5.6-sol",
+            )
+
+    def test_codex_provider_defaults_to_sol(self) -> None:
+        task = self.db.create_task(
+            repo_path=self.temp.name, prompt="do work", provider="codex"
+        )
+        self.assertEqual("codex", task.provider)
+        self.assertEqual("gpt-5.6-sol", task.model)
+
     def test_approval_is_hash_bound_and_single_use(self) -> None:
         task = self.db.create_task(repo_path=self.temp.name, prompt="do work")
         payload = {"command": "npm test"}
@@ -162,6 +197,22 @@ class DatabaseTests(unittest.TestCase):
                         {"key": "root", "prompt": "root"},
                         {"key": "left", "prompt": "left", "depends_on": ["root"]},
                         {"key": "right", "prompt": "right", "depends_on": ["root"]},
+                    ]
+                },
+            )
+
+    def test_workflow_validates_codex_model_before_review(self) -> None:
+        with self.assertRaises(ValueError):
+            self.db.propose_workflow(
+                "bad-codex",
+                {
+                    "tasks": [
+                        {
+                            "key": "implement",
+                            "prompt": "work",
+                            "provider": "codex",
+                            "model": "gpt-5.6-unknown",
+                        }
                     ]
                 },
             )

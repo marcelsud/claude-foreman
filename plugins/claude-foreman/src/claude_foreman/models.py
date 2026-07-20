@@ -31,6 +31,44 @@ class ApprovalStatus(StrEnum):
     EXPIRED = "expired"
 
 
+class WorkerProvider(StrEnum):
+    CLAUDE = "claude"
+    CODEX = "codex"
+
+
+CODEX_MODELS = ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
+DEFAULT_MODELS = {
+    WorkerProvider.CLAUDE: "sonnet",
+    WorkerProvider.CODEX: "gpt-5.6-sol",
+}
+
+
+def resolve_worker_config(
+    provider: str | None, model: str | None, effort: str
+) -> tuple[str, str, str]:
+    if model is not None and not model.strip():
+        raise ValueError("model must not be empty")
+    clean_model = model.strip() if model else None
+    inferred = WorkerProvider.CODEX if clean_model and clean_model.startswith("gpt-") else WorkerProvider.CLAUDE
+    try:
+        resolved_provider = WorkerProvider(provider or inferred)
+    except ValueError as exc:
+        raise ValueError(f"invalid provider: {provider}") from exc
+    resolved_model = clean_model or DEFAULT_MODELS[resolved_provider]
+    if resolved_provider == WorkerProvider.CLAUDE and resolved_model.startswith("gpt-"):
+        raise ValueError("GPT models require provider 'codex'")
+    if resolved_provider == WorkerProvider.CODEX and resolved_model not in CODEX_MODELS:
+        raise ValueError(
+            "Codex model must be one of: " + ", ".join(CODEX_MODELS)
+        )
+    allowed_efforts = {"low", "medium", "high", "xhigh", "max"}
+    if resolved_provider == WorkerProvider.CODEX and resolved_model != "gpt-5.6-luna":
+        allowed_efforts.add("ultra")
+    if effort not in allowed_efforts:
+        raise ValueError(f"invalid effort {effort!r} for {resolved_model}")
+    return str(resolved_provider), resolved_model, effort
+
+
 @dataclass(slots=True)
 class Goal:
     id: str
@@ -52,6 +90,7 @@ class Task:
     prompt: str
     status: str
     priority: int
+    provider: str
     model: str
     effort: str
     base_ref: str
@@ -59,6 +98,7 @@ class Task:
     branch_name: str | None
     worktree_path: str | None
     claude_session_id: str | None
+    worker_session_id: str | None
     max_turns: int
     error: str | None
     result_summary: str | None

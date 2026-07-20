@@ -3,18 +3,19 @@
 [![CI](https://github.com/marcelsud/claude-foreman/actions/workflows/ci.yml/badge.svg)](https://github.com/marcelsud/claude-foreman/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../../LICENSE)
 
-Claude Foreman is a local control plane that lets Codex manage background Claude Code coding tasks. It keeps goals, tasks, runs, approvals, and audit events in SQLite; isolates every task in a Git worktree; and runs Claude through the Claude Agent SDK using the current user's Claude subscription login.
+Claude Foreman is a local control plane that lets Codex manage background Claude Code and Codex coding tasks. It keeps goals, tasks, runs, approvals, and audit events in SQLite; isolates every task in a Git worktree; runs Claude through the Claude Agent SDK; and runs GPT-5.6 workers through the Codex App Server.
 
-It never reads or accepts an Anthropic API key. Worker processes remove API-key, gateway, and cloud-provider authentication variables before starting. Usage goes through the signed-in subscription's Claude Agent SDK allowance, not pay-as-you-go API billing.
+It never accepts Anthropic or OpenAI API billing credentials. Worker processes remove API-key, gateway, cloud-provider, and access-token environment variables before starting. Claude uses the saved Claude Code login; Codex requires App Server to report a saved `chatgpt` account and rejects `apiKey` accounts.
 
 ## Requirements
 
 - Python 3.11+
 - Git
-- A Claude Pro, Max, Team, or Enterprise subscription
-- Claude authentication available to the current OS user (`claude auth login` or an existing Claude Code login)
+- At least one ready worker provider: Claude Code with a Claude subscription, or Codex CLI with a ChatGPT subscription
 - Linux, macOS, or WSL2 for Claude Code Bash sandboxing
 - On Linux/WSL: `bubblewrap` (`bwrap`) and `socat`
+
+The final sandbox-helper requirement applies to Claude workers. Codex workers use the Codex CLI `workspace-write` sandbox.
 
 Do not keep the state database or active worktrees in OneDrive. The defaults use `~/.local/share/claude-foreman`.
 
@@ -67,10 +68,10 @@ The installed bridge uses `~/.local/share/claude-foreman/runtime`, injects its o
 
 ## Control model
 
-- Goals group durable outcomes; tasks carry a repository, prompt, priority, model, effort, turn budget, and dependencies. Queued tasks can be retuned with `task_configure` before the scheduler claims them.
+- Goals group durable outcomes; tasks carry a repository, prompt, provider, model, effort, turn budget, and dependencies. Queued tasks can be retuned with `task_configure` before the scheduler claims them.
 - The detached scheduler atomically claims ready tasks from SQLite and records structured progress events.
 - Codex reads events, answers scoped approval requests, reviews the worktree diff, then accepts or requeues the task.
-- Clarifying questions are durable approval records; Codex returns structured selections through `approval_decide.answers`, allowing the paused Claude session to resume.
+- Clarifying questions are durable approval records; Codex returns structured selections through `approval_decide.answers`, allowing either paused worker to resume.
 - `task_cancel` interrupts an active SDK query. Stopping the daemon cancels its active workers before exiting.
 - Reviewed workflows compile into dependency-gated phases. A linear phase chain shares one isolated worktree so later phases see accepted earlier changes.
 - Workflow versions are immutable and cannot run until Codex explicitly activates the reviewed version.
@@ -81,6 +82,8 @@ The installed bridge uses `~/.local/share/claude-foreman/runtime`, injects its o
 - Claude uses `permission_mode="default"` plus a `PreToolUse` policy hook. In-worktree reads/edits and a narrow allowlist of test, lint, build, and read-only Git commands are auto-allowed and audited; arbitrary shell commands require a manager decision.
 - Bash runs in Claude's sandbox with network denied, local binding denied, and unsandboxed commands disabled.
 - On Linux/WSL, startup fails closed unless both `bubblewrap` (`bwrap`) and `socat` are installed; Foreman never accepts Claude Code's unsandboxed fallback.
+- Codex runs through App Server with `workspace-write`, `on-request` approvals, no model fallback, and no environment capabilities. Foreman verifies ChatGPT authentication and the selected model/effort against the live model catalog before starting the turn.
+- App Server approvals are exact and single-use. Foreman never returns `acceptForSession` or persists a relaxed permission rule.
 - External paths, web/MCP access, destructive commands, Git commits/publication, and questions become exact hash-bound approval requests.
 - Force-push, merge, deployment, infrastructure apply, and sandbox bypass additionally require explicit human confirmation.
 - Foreman never commits, pushes, merges, deletes a worktree, or deploys automatically.

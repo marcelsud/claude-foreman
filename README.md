@@ -3,17 +3,18 @@
 [![CI](https://github.com/marcelsud/claude-foreman/actions/workflows/ci.yml/badge.svg)](https://github.com/marcelsud/claude-foreman/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Give Codex a background Claude Code worker for implementation tasks. Codex remains the manager: it defines the work, handles routine approvals, watches progress, reviews the diff, and asks you before anything risky.
+Give Codex background Claude Code or Codex workers for implementation tasks. Codex remains the manager: it defines the work, handles routine approvals, watches progress, reviews the diff, and asks you before anything risky.
 
-Claude Foreman uses your existing Claude subscription login. It does not accept or use an Anthropic API key.
+Claude Foreman uses your existing Claude and ChatGPT subscription logins. It removes Anthropic and OpenAI API credentials from worker processes, so delegated work cannot silently switch to pay-as-you-go API billing.
 
 ## What you get
 
 - Background coding tasks that survive beyond a single Codex response
 - One isolated Git worktree per task
 - Durable goals, tasks, progress events, approvals, and workflows in SQLite
-- Configurable Claude model, effort, priority, dependencies, and turn budget
-- Sandboxed Claude Code commands with network access disabled by default
+- Configurable provider, model, effort, priority, dependencies, and turn budget
+- Claude models plus the GPT-5.6 Codex family: Sol, Terra, and Luna
+- Sandboxed worker commands with network access disabled by default
 - A review gate before any result is accepted
 - No automatic commits, pushes, merges, deployments, or worktree deletion
 
@@ -27,16 +28,18 @@ You need:
 - Python 3.11 or newer
 - Git
 - Linux, macOS, or WSL2
-- A Claude Pro, Max, Team, or Enterprise subscription
-- Claude Code signed in for the current OS user
+- At least one supported subscription login:
+  - Claude Pro, Max, Team, or Enterprise with Claude Code signed in
+  - ChatGPT with Codex CLI signed in
 
 Sign in if needed:
 
 ```bash
 claude auth login
+codex login
 ```
 
-On Ubuntu or WSL Ubuntu, install the sandbox helpers:
+The Claude worker needs the sandbox helpers below on Ubuntu or WSL Ubuntu. Codex workers use the Codex CLI sandbox and do not require them.
 
 ```bash
 sudo apt-get update
@@ -57,7 +60,7 @@ The runtime and persistent state are stored outside the clone under `~/.local/sh
 
 ### 3. Start a new Codex task
 
-Open a new task in Codex after installation so it discovers the Claude Foreman skill and MCP tools.
+Open a new task in Codex after installation so it discovers the Foreman skill and MCP tools.
 
 Your target project must be a Git repository with at least one commit. Use its absolute path when delegating work.
 
@@ -78,6 +81,12 @@ feedback if needed; otherwise accept it and tell me where the worktree is.
 Do not commit, push, merge, or deploy.
 ```
 
+To delegate the same work to Codex through your ChatGPT subscription, replace the model instruction with:
+
+```text
+Use the Codex provider with gpt-5.6-terra and medium effort. Do not use an API key.
+```
+
 You can keep talking to Codex while Claude works. Ask for status at any time:
 
 ```text
@@ -90,8 +99,8 @@ Show me the current Claude Foreman tasks, meaningful progress, and pending appro
 | --- | --- |
 | `queued` | The task is waiting for the scheduler or a dependency. |
 | `preparing` | Foreman is creating the isolated worktree and run. |
-| `running` | Claude is working inside its isolated worktree. |
-| `awaiting_approval` | Claude needs an answer or an exact approval decision. |
+| `running` | The selected worker is working inside its isolated worktree. |
+| `awaiting_approval` | The worker needs an answer or an exact approval decision. |
 | `verifying` | Foreman is collecting the final repository state and results. |
 | `awaiting_review` | Codex should inspect the full diff and verification results. |
 | `completed` | Codex accepted the result after review. |
@@ -112,9 +121,15 @@ to bring those changes into my current branch. Do not commit or merge yet.
 
 ## Choosing model and effort
 
-- `sonnet` + `medium`: the default for routine implementation
-- `sonnet` + `high`: larger refactors or difficult debugging
-- `opus` + `xhigh`: unusually difficult work where cost and latency are acceptable
+| Provider | Model | Good fit | Effort |
+| --- | --- | --- | --- |
+| Claude | `sonnet` | Default, routine implementation | `medium` or `high` |
+| Claude | `opus` | Unusually difficult work | up to `max` |
+| Codex | `gpt-5.6-sol` | Strongest complex coding and research | `low` through `ultra` |
+| Codex | `gpt-5.6-terra` | Balanced everyday coding | `low` through `ultra` |
+| Codex | `gpt-5.6-luna` | Fastest iteration | `low` through `max` |
+
+If you specify a `gpt-5.6-*` model, Foreman infers the Codex provider. If you specify only `provider: codex`, it defaults to `gpt-5.6-sol`. Claude Sonnet remains the default for backward compatibility.
 
 You can change model or effort while a task is still queued. Once claimed, the task keeps its original configuration for a reproducible audit trail.
 
@@ -138,7 +153,7 @@ Ask Codex:
 Run Claude Foreman doctor and explain every failed check without changing anything.
 ```
 
-Common causes are an expired Claude login, missing `bubblewrap` or `socat`, a repository without an initial commit, or opening Codex before the plugin was installed. After installing or updating, start a new Codex task.
+Common causes are an expired Claude or ChatGPT login, missing `bubblewrap` or `socat` for Claude workers, a repository without an initial commit, or opening Codex before the plugin was installed. After installing or updating, start a new Codex task.
 
 Do not put the SQLite database or active worktrees in OneDrive or another synchronized directory. The defaults already use a local path.
 

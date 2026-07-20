@@ -53,25 +53,53 @@ def run_doctor(config: ForemanConfig) -> dict[str, Any]:
             auth_status = {"loggedIn": False, "error": f"{type(exc).__name__}: {exc}"}
     logged_in = bool(auth_status and auth_status.get("loggedIn"))
     sandbox_missing = missing_sandbox_dependencies()
+    codex_cli = shutil.which("codex")
+    codex_auth: dict[str, Any] = {"loggedIn": False}
+    if codex_cli:
+        try:
+            result = subprocess.run(
+                [codex_cli, "login", "status"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=subscription_environment(),
+                check=False,
+                timeout=20,
+            )
+            output = (result.stdout + result.stderr).strip()
+            codex_auth = {
+                "loggedIn": result.returncode == 0 and "chatgpt" in output.lower(),
+                "mode": "chatgpt" if "chatgpt" in output.lower() else "unknown",
+                "returncode": result.returncode,
+            }
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            codex_auth = {"loggedIn": False, "error": f"{type(exc).__name__}: {exc}"}
+    claude_ready = bool(sdk_installed and claude_cli and logged_in and not sandbox_missing)
+    codex_ready = bool(codex_cli and codex_auth["loggedIn"])
     checks = {
         "database": {"ok": config.db_path.exists(), "path": str(config.db_path)},
         "git": {"ok": shutil.which("git") is not None, "path": shutil.which("git")},
-        "claude_agent_sdk": {"ok": sdk_installed},
-        "subscription_credentials": {
-            "ok": logged_in,
-            "credential_file_present": credentials.exists(),
-            "claude_cli": claude_cli,
-            "auth_status": auth_status,
+        "providers": {
+            "ok": claude_ready or codex_ready,
+            "claude": {
+                "ok": claude_ready,
+                "agent_sdk": sdk_installed,
+                "cli": claude_cli,
+                "subscription_logged_in": logged_in,
+                "credential_file_present": credentials.exists(),
+                "sandbox_missing": sandbox_missing,
+            },
+            "codex": {
+                "ok": codex_ready,
+                "cli": codex_cli,
+                "subscription_logged_in": codex_auth["loggedIn"],
+                "auth_mode": codex_auth.get("mode"),
+            },
         },
         "api_or_provider_variables": {
             "ok": not active_non_subscription_credentials(),
             "present": active_non_subscription_credentials(),
             "note": "Foreman removes these variables from daemon and worker processes.",
-        },
-        "platform": {
-            "ok": not sandbox_missing,
-            "sandbox_missing": sandbox_missing,
-            "sandbox_note": "Foreman fails closed when Claude Bash sandbox dependencies are unavailable.",
         },
     }
     return {

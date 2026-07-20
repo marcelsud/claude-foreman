@@ -15,18 +15,25 @@ class SubscriptionAuthTests(unittest.TestCase):
                 "ANTHROPIC_API_KEY": "secret",
                 "ANTHROPIC_AUTH_TOKEN": "token",
                 "CLAUDE_CODE_USE_BEDROCK": "1",
+                "OPENAI_API_KEY": "openai-secret",
+                "CODEX_ACCESS_TOKEN": "codex-token",
                 "KEEP_ME": "yes",
             },
             clear=True,
         ):
             self.assertEqual(
-                ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK"],
+                [
+                    "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+                    "CLAUDE_CODE_USE_BEDROCK", "CODEX_ACCESS_TOKEN", "OPENAI_API_KEY",
+                ],
                 active_non_subscription_credentials(),
             )
             env = subscription_environment()
             self.assertNotIn("ANTHROPIC_API_KEY", env)
             self.assertNotIn("ANTHROPIC_AUTH_TOKEN", env)
             self.assertNotIn("CLAUDE_CODE_USE_BEDROCK", env)
+            self.assertNotIn("OPENAI_API_KEY", env)
+            self.assertNotIn("CODEX_ACCESS_TOKEN", env)
             self.assertEqual("yes", env["KEEP_ME"])
             self.assertEqual("subscription", env["CLAUDE_FOREMAN_AUTH_MODE"])
             self.assertEqual("/tmp", env["TMPDIR"])
