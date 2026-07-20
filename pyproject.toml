@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-foreman"
+version = "0.1.0"
+description = "A local Codex-managed control plane for background Claude Code workers"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "marcelsud" }]
+dependencies = ["claude-agent-sdk>=0.2.111"]
+
+[project.urls]
+Homepage = "https://github.com/marcelsud/claude-foreman"
+Repository = "https://github.com/marcelsud/claude-foreman"
+Issues = "https://github.com/marcelsud/claude-foreman/issues"
+
+[project.scripts]
+claude-foreman = "claude_foreman.cli:main"
+claude-foreman-mcp = "claude_foreman.mcp_server:main"
+claude-foremand = "claude_foreman.daemon:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manage Claude Foreman"
+  short_description: "Manage background Claude coding work"
+  default_prompt: "Use $manage-claude-foreman to delegate a coding task, monitor progress, review approvals, and inspect the result."

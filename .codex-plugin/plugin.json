@@ -1,0 +1,29 @@
+{
+  "name": "claude-foreman",
+  "version": "0.1.0",
+  "description": "Manage isolated background Claude Code workers from Codex",
+  "author": {
+    "name": "marcelsud",
+    "url": "https://github.com/marcelsud"
+  },
+  "homepage": "https://github.com/marcelsud/claude-foreman",
+  "repository": "https://github.com/marcelsud/claude-foreman",
+  "license": "MIT",
+  "keywords": ["codex", "claude-code", "background-agent", "worktrees"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Claude Foreman",
+    "shortDescription": "Manage background Claude coding workers.",
+    "longDescription": "Queue isolated Claude Code tasks, review durable approval requests, monitor structured progress, and accept or requeue worktree results from Codex.",
+    "developerName": "marcelsud",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://github.com/marcelsud/claude-foreman",
+    "defaultPrompt": [
+      "Delegate this coding task to Claude Foreman.",
+      "Show pending Claude Foreman approvals.",
+      "Review the latest Claude Foreman result."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}
