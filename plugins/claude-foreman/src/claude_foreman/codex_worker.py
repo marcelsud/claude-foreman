@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from .approval_policy import auto_allow, classify_risk, request_hash
-from .config import ForemanConfig, subscription_environment
+from .config import (
+    ForemanConfig,
+    codex_subscription_command,
+    subscription_environment,
+)
 from .database import ForemanDB
 from .models import ApprovalStatus, Task, TaskStatus
 from .usage import record_codex_usage
@@ -96,8 +100,7 @@ class CodexAppServerWorker:
         self._completed = asyncio.get_running_loop().create_future()
         env = subscription_environment({"CLAUDE_FOREMAN_WORKER_PROVIDER": "codex"})
         self.process = await asyncio.create_subprocess_exec(
-            codex,
-            "app-server",
+            *codex_subscription_command(codex, "app-server"),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -112,7 +115,7 @@ class CodexAppServerWorker:
                     "clientInfo": {
                         "name": "claude-foreman",
                         "title": "Claude Foreman",
-                        "version": "0.2.0",
+                        "version": "0.3.1",
                     },
                     "capabilities": {"experimentalApi": True},
                 },

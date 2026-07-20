@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-foreman"
-version = "0.3.0"
+version = "0.3.1"
 description = "A local control plane for Codex-managed background Claude Code and Codex workers"
 readme = "README.md"
 requires-python = ">=3.11"

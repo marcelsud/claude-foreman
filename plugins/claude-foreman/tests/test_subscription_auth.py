@@ -4,10 +4,27 @@ import os
 import unittest
 from unittest.mock import patch
 
-from claude_foreman.config import active_non_subscription_credentials, subscription_environment
+from claude_foreman.config import (
+    active_non_subscription_credentials,
+    codex_subscription_command,
+    subscription_environment,
+)
 
 
 class SubscriptionAuthTests(unittest.TestCase):
+    def test_codex_command_forces_builtin_chatgpt_subscription_provider(self) -> None:
+        self.assertEqual(
+            [
+                "/usr/bin/codex",
+                "-c",
+                'model_provider="openai"',
+                "-c",
+                'forced_login_method="chatgpt"',
+                "app-server",
+            ],
+            codex_subscription_command("/usr/bin/codex", "app-server"),
+        )
+
     def test_worker_environment_removes_all_non_subscription_auth(self) -> None:
         with patch.dict(
             os.environ,

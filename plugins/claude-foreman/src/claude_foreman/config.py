@@ -25,6 +25,11 @@ SUBSCRIPTION_AUTH_BLOCKLIST = {
     "OPENAI_PROJECT_ID",
 }
 
+CODEX_SUBSCRIPTION_OVERRIDES = (
+    'model_provider="openai"',
+    'forced_login_method="chatgpt"',
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ForemanConfig:
@@ -92,6 +97,15 @@ def subscription_environment(extra: dict[str, str] | None = None) -> dict[str, s
     # sandbox cannot write there, while /tmp is an approved, private runtime area.
     env.update({"TMPDIR": "/tmp", "TMP": "/tmp", "TEMP": "/tmp"})
     return env
+
+
+def codex_subscription_command(executable: str, *args: str) -> list[str]:
+    """Build a Codex command pinned to the built-in ChatGPT subscription provider."""
+    command = [executable]
+    for override in CODEX_SUBSCRIPTION_OVERRIDES:
+        command.extend(("-c", override))
+    command.extend(args)
+    return command
 
 
 def active_non_subscription_credentials() -> list[str]:

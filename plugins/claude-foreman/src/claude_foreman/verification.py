@@ -12,7 +12,11 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
-from .config import ForemanConfig, subscription_environment
+from .config import (
+    ForemanConfig,
+    codex_subscription_command,
+    subscription_environment,
+)
 from .database import ForemanDB
 from .models import Task
 from .worktrees import SANDBOX_ARTIFACT_PATHS
@@ -73,8 +77,7 @@ class _AppServerCommands:
         if not codex:
             raise RuntimeError("Codex CLI is unavailable for sandboxed verification")
         self.process = await asyncio.create_subprocess_exec(
-            codex,
-            "app-server",
+            *codex_subscription_command(codex, "app-server"),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
@@ -88,7 +91,7 @@ class _AppServerCommands:
                     "clientInfo": {
                         "name": "claude-foreman-verifier",
                         "title": "Claude Foreman Verifier",
-                        "version": "0.3.0",
+                        "version": "0.3.1",
                     }
                 },
             )

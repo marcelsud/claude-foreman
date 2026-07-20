@@ -10,6 +10,7 @@ from typing import Any
 from .config import (
     ForemanConfig,
     active_non_subscription_credentials,
+    codex_subscription_command,
     missing_sandbox_dependencies,
     subscription_environment,
 )
@@ -58,7 +59,7 @@ def run_doctor(config: ForemanConfig) -> dict[str, Any]:
     if codex_cli:
         try:
             result = subprocess.run(
-                [codex_cli, "login", "status"],
+                codex_subscription_command(codex_cli, "login", "status"),
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -94,6 +95,9 @@ def run_doctor(config: ForemanConfig) -> dict[str, Any]:
                 "cli": codex_cli,
                 "subscription_logged_in": codex_auth["loggedIn"],
                 "auth_mode": codex_auth.get("mode"),
+                "model_provider": "openai",
+                "model_provider_source": "foreman_process_override",
+                "forced_login_method": "chatgpt",
             },
         },
         "api_or_provider_variables": {
