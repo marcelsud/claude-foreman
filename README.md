@@ -3,93 +3,150 @@
 [![CI](https://github.com/marcelsud/claude-foreman/actions/workflows/ci.yml/badge.svg)](https://github.com/marcelsud/claude-foreman/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Claude Foreman is a local control plane that lets Codex manage background Claude Code coding tasks. It keeps goals, tasks, runs, approvals, and audit events in SQLite; isolates every task in a Git worktree; and runs Claude through the Claude Agent SDK using the current user's Claude subscription login.
+Give Codex a background Claude Code worker for implementation tasks. Codex remains the manager: it defines the work, handles routine approvals, watches progress, reviews the diff, and asks you before anything risky.
 
-It never reads or accepts an Anthropic API key. Worker processes remove API-key, gateway, and cloud-provider authentication variables before starting. Usage goes through the signed-in subscription's Claude Agent SDK allowance, not pay-as-you-go API billing.
+Claude Foreman uses your existing Claude subscription login. It does not accept or use an Anthropic API key.
 
-## Requirements
+## What you get
 
-- Python 3.11+
+- Background coding tasks that survive beyond a single Codex response
+- One isolated Git worktree per task
+- Durable goals, tasks, progress events, approvals, and workflows in SQLite
+- Configurable Claude model, effort, priority, dependencies, and turn budget
+- Sandboxed Claude Code commands with network access disabled by default
+- A review gate before any result is accepted
+- No automatic commits, pushes, merges, deployments, or worktree deletion
+
+## Quick start
+
+### 1. Check the prerequisites
+
+You need:
+
+- Codex with plugin support
+- Python 3.11 or newer
 - Git
+- Linux, macOS, or WSL2
 - A Claude Pro, Max, Team, or Enterprise subscription
-- Claude authentication available to the current OS user (`claude auth login` or an existing Claude Code login)
-- Linux, macOS, or WSL2 for Claude Code Bash sandboxing
-- On Linux/WSL: `bubblewrap` (`bwrap`) and `socat`
+- Claude Code signed in for the current OS user
 
-Do not keep the state database or active worktrees in OneDrive. The defaults use `~/.local/share/claude-foreman`.
+Sign in if needed:
 
-## Install from source
+```bash
+claude auth login
+```
+
+On Ubuntu or WSL Ubuntu, install the sandbox helpers:
+
+```bash
+sudo apt-get update
+sudo apt-get install bubblewrap socat
+```
+
+### 2. Install Claude Foreman
 
 ```bash
 git clone https://github.com/marcelsud/claude-foreman.git
 cd claude-foreman
-python3 -m venv .venv
-.venv/bin/pip install -e .
-.venv/bin/claude-foreman init
-.venv/bin/claude-foreman doctor
-python3 scripts/bootstrap_runtime.py
+python3 plugins/claude-foreman/scripts/bootstrap_runtime.py
+codex plugin marketplace add .
+codex plugin add claude-foreman@claude-foreman
 ```
 
-On Linux/WSL, install the sandbox dependencies with your system package manager. For Ubuntu:
+The runtime and persistent state are stored outside the clone under `~/.local/share/claude-foreman`.
 
-```bash
-sudo apt-get install bubblewrap socat
+### 3. Start a new Codex task
+
+Open a new task in Codex after installation so it discovers the Claude Foreman skill and MCP tools.
+
+Your target project must be a Git repository with at least one commit. Use its absolute path when delegating work.
+
+### 4. Delegate your first task
+
+Paste this into Codex and replace the repository path and requested change:
+
+```text
+Use Claude Foreman to implement this in /absolute/path/to/my-repo:
+
+Add validation for empty usernames and cover it with tests.
+
+Run Foreman doctor first. Use Claude Sonnet with medium effort, start the
+task in the background, and monitor meaningful progress. Handle only routine
+in-scope approvals. Ask me before risky or external actions. When Claude is
+done, inspect the complete diff and test results. Requeue with specific
+feedback if needed; otherwise accept it and tell me where the worktree is.
+Do not commit, push, merge, or deploy.
 ```
 
-Start a new Codex task after installing or updating the plugin so Codex discovers its skill and MCP tools.
+You can keep talking to Codex while Claude works. Ask for status at any time:
 
-## Install for development
-
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -e .
-.venv/bin/claude-foreman init
-.venv/bin/claude-foreman doctor
+```text
+Show me the current Claude Foreman tasks, meaningful progress, and pending approvals.
 ```
 
-Start the scheduler:
+## What happens next
 
-```bash
-.venv/bin/claude-foreman daemon start
+| State | Meaning |
+| --- | --- |
+| `queued` | The task is waiting for the scheduler or a dependency. |
+| `preparing` | Foreman is creating the isolated worktree and run. |
+| `running` | Claude is working inside its isolated worktree. |
+| `awaiting_approval` | Claude needs an answer or an exact approval decision. |
+| `verifying` | Foreman is collecting the final repository state and results. |
+| `awaiting_review` | Codex should inspect the full diff and verification results. |
+| `completed` | Codex accepted the result after review. |
+| `failed` / `cancelled` | The run ended without an accepted result. |
+
+Codex can approve reversible work confined to the task. Credential access, sandbox bypass, destructive commands, publishing, deployment, and other critical actions must come back to you.
+
+## Review and integrate the result
+
+Acceptance is a review decision, not a merge. The changes remain uncommitted in the Foreman worktree. Ask Codex to show the worktree path and final diff, then decide how to integrate them into your branch.
+
+For example:
+
+```text
+Show me the accepted task's worktree, branch, full diff, and the safest commands
+to bring those changes into my current branch. Do not commit or merge yet.
 ```
 
-The bundled Codex plugin starts its MCP bridge with `scripts/foreman_mcp.py`. In a source checkout the bridge automatically re-executes under `.venv`; `FOREMAN_PYTHON` can override that interpreter.
+## Choosing model and effort
 
-Before installing a cached/personal copy of the plugin, create its stable shared runtime:
+- `sonnet` + `medium`: the default for routine implementation
+- `sonnet` + `high`: larger refactors or difficult debugging
+- `opus` + `xhigh`: unusually difficult work where cost and latency are acceptable
 
-```bash
-python3 scripts/bootstrap_runtime.py
+You can change model or effort while a task is still queued. Once claimed, the task keeps its original configuration for a reproducible audit trail.
+
+## Reusable workflows
+
+For complex work, ask Codex to propose a reviewed multi-phase workflow:
+
+```text
+Propose a Claude Foreman workflow for this repository with separate phases for
+investigation, implementation, and verification. Show me every phase, model,
+effort, dependency, and permission implication before activating it.
 ```
 
-The installed bridge uses `~/.local/share/claude-foreman/runtime`, injects its own cached `src/` into `PYTHONPATH`, and keeps SQLite state under `~/.local/share/claude-foreman`. A source checkout falls back to its ignored `.foreman-data/` only when the managed Codex sandbox cannot write the home directory.
+Each phase waits for review before its dependent phase starts.
 
-## Control model
+## Troubleshooting
 
-- Goals group durable outcomes; tasks carry a repository, prompt, priority, model, effort, turn budget, and dependencies. Queued tasks can be retuned with `task_configure` before the scheduler claims them.
-- The detached scheduler atomically claims ready tasks from SQLite and records structured progress events.
-- Codex reads events, answers scoped approval requests, reviews the worktree diff, then accepts or requeues the task.
-- Clarifying questions are durable approval records; Codex returns structured selections through `approval_decide.answers`, allowing the paused Claude session to resume.
-- `task_cancel` interrupts an active SDK query. Stopping the daemon cancels its active workers before exiting.
-- Reviewed workflows compile into dependency-gated phases. A linear phase chain shares one isolated worktree so later phases see accepted earlier changes.
-- Workflow versions are immutable and cannot run until Codex explicitly activates the reviewed version.
+Ask Codex:
 
-## Safety defaults
-
-- Work occurs only in Foreman-created Git worktrees.
-- Claude uses `permission_mode="default"` plus a `PreToolUse` policy hook. In-worktree reads/edits and a narrow allowlist of test, lint, build, and read-only Git commands are auto-allowed and audited; arbitrary shell commands require a manager decision.
-- Bash runs in Claude's sandbox with network denied, local binding denied, and unsandboxed commands disabled.
-- On Linux/WSL, startup fails closed unless both `bubblewrap` (`bwrap`) and `socat` are installed; Foreman never accepts Claude Code's unsandboxed fallback.
-- External paths, web/MCP access, destructive commands, Git commits/publication, and questions become exact hash-bound approval requests.
-- Force-push, merge, deployment, infrastructure apply, and sandbox bypass additionally require explicit human confirmation.
-- Foreman never commits, pushes, merges, deletes a worktree, or deploys automatically.
-
-SQLite state, daemon logs, and worktrees default to `~/.local/share/claude-foreman`. Override the root with `FOREMAN_DATA_DIR`, or use `FOREMAN_DB_PATH`, `FOREMAN_WORKTREES_DIR`, `FOREMAN_LOGS_DIR`, and `FOREMAN_PID_PATH` individually. Prefer a local, non-synced filesystem when your sandbox policy permits it. Worker concurrency is `FOREMAN_MAX_WORKERS`; polling is `FOREMAN_POLL_INTERVAL`.
-
-## Development commands
-
-```bash
-python3 -m unittest discover -s tests -v
-python3 scripts/foreman_mcp.py --self-test
+```text
+Run Claude Foreman doctor and explain every failed check without changing anything.
 ```
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development and pull-request workflow.
+Common causes are an expired Claude login, missing `bubblewrap` or `socat`, a repository without an initial commit, or opening Codex before the plugin was installed. After installing or updating, start a new Codex task.
+
+Do not put the SQLite database or active worktrees in OneDrive or another synchronized directory. The defaults already use a local path.
+
+## Developer documentation
+
+- [Architecture, control model, and safety defaults](plugins/claude-foreman/README.md)
+- [Contributing](CONTRIBUTING.md)
+- [Approval policy](plugins/claude-foreman/skills/manage-claude-foreman/references/approval-policy.md)
+- [Workflow schema](plugins/claude-foreman/skills/manage-claude-foreman/references/workflow-schema.md)
+
+Claude Foreman is open source under the [MIT License](LICENSE).

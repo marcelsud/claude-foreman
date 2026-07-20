@@ -1,0 +1,20 @@
+{
+  "name": "claude-foreman",
+  "interface": {
+    "displayName": "Claude Foreman"
+  },
+  "plugins": [
+    {
+      "name": "claude-foreman",
+      "source": {
+        "source": "local",
+        "path": "./plugins/claude-foreman"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

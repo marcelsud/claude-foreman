@@ -6,9 +6,11 @@ Thanks for helping improve Claude Foreman.
 
 1. Fork and clone the repository.
 2. Create a virtual environment with Python 3.11 or newer.
-3. Install the project with `.venv/bin/pip install -e .`.
-4. Run `.venv/bin/python -m unittest discover -s tests -v`.
-5. Run `.venv/bin/python scripts/foreman_mcp.py --self-test`.
+3. Change to `plugins/claude-foreman`.
+4. Create the environment with `python3 -m venv .venv`.
+5. Install the project with `.venv/bin/pip install -e .`.
+6. Run `.venv/bin/python -m unittest discover -s tests -v`.
+7. Run `.venv/bin/python scripts/foreman_mcp.py --self-test`.
 
 Keep changes focused and include tests for behavior changes. Never add API keys, OAuth tokens, state databases, daemon logs, or active worktrees to commits.
 
