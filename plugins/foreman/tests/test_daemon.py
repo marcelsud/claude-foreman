@@ -10,6 +10,7 @@ from pathlib import Path
 from foreman.config import ForemanConfig
 from foreman.daemon import ForemanDaemon
 from foreman.database import ForemanDB
+from foreman.models import TaskStatus
 
 
 class DaemonTests(unittest.IsolatedAsyncioTestCase):
@@ -73,6 +74,51 @@ class DaemonTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(started.wait(), timeout=1)
                 await asyncio.wait_for(serving, timeout=1)
             finally:
+                daemon.stop_event.set()
+                daemon.db.wake.publish(channel="queue")
+                if not serving.done():
+                    await serving
+
+    async def test_accepting_parent_wakes_dependent_task_before_recovery_interval(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp:
+            config = replace(self.config(Path(temp)), poll_interval=5.0)
+            writer = ForemanDB(config.db_path, data_dir=config.data_dir)
+            writer.initialize()
+            parent = writer.create_task(repo_path=temp, prompt="parent")
+            child = writer.create_task(
+                repo_path=temp,
+                prompt="dependent",
+                depends_on=[parent.id],
+            )
+            writer.update_task(parent.id, status=TaskStatus.AWAITING_REVIEW)
+
+            daemon = ForemanDaemon(config)
+            started = asyncio.Event()
+
+            class Worker:
+                async def run(inner_self, task) -> None:
+                    self.assertEqual(child.id, task.id)
+                    started.set()
+                    daemon.stop_event.set()
+
+            daemon.worker = Worker()  # type: ignore[assignment]
+            serving = asyncio.create_task(daemon.serve())
+            try:
+                deadline = asyncio.get_running_loop().time() + 3
+                while not daemon.db.wake.ipc_available:
+                    if serving.done():
+                        await serving
+                        self.fail("daemon stopped before starting its wake listener")
+                    if asyncio.get_running_loop().time() >= deadline:
+                        self.fail("daemon wake listener did not start")
+                    await asyncio.sleep(0.01)
+
+                writer.accept_task(parent.id)
+
+                await asyncio.wait_for(started.wait(), timeout=1)
+                await asyncio.wait_for(serving, timeout=1)
+            finally:
+                writer.wake.close()
                 daemon.stop_event.set()
                 daemon.db.wake.publish(channel="queue")
                 if not serving.done():

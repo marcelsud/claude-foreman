@@ -1337,6 +1337,7 @@ class ForemanDB:
             raise ValueError(f"task must be awaiting_review, not {task.status}")
         task = self.update_task(task_id, status=TaskStatus.COMPLETED, completed_at=utcnow())
         self.add_event(task_id, self.latest_run_id(task_id), "task.accepted", {"actor": actor})
+        self.wake.publish(channel="queue")
         return task
 
     def requeue_task(self, task_id: str, feedback: str, actor: str = "codex") -> Task:
