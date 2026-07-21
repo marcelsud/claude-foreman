@@ -41,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     config = ForemanConfig.from_env()
-    db = ForemanDB(config.db_path)
+    db = ForemanDB(config.db_path, data_dir=config.data_dir)
     if args.command == "init":
         config.ensure_directories()
         db.initialize()

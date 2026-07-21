@@ -4,9 +4,11 @@ import argparse
 import json
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable, TextIO
 
 from . import __version__
 from .approval_policy import human_only
@@ -83,10 +85,11 @@ class ForemanTools:
     def __init__(self, config: ForemanConfig):
         self.config = config
         config.ensure_directories()
-        self.db = ForemanDB(config.db_path)
+        self.db = ForemanDB(config.db_path, data_dir=config.data_dir)
         self.db.initialize()
         self.controller = DaemonController(config)
         self.worktrees = WorktreeManager(config)
+        self.mutation_lock = threading.RLock()
         self.tools = self._build()
 
     def _build(self) -> dict[str, Tool]:
@@ -215,6 +218,29 @@ class ForemanTools:
                 "Read structured progress events for a task after an event cursor.",
                 obj({"task_id": string, "after_id": integer, "limit": integer}, ["task_id"]),
                 lambda a: self.db.events(a["task_id"], a.get("after_id", 0), a.get("limit", 200)),
+                read_only=True,
+                idempotent=True,
+            ),
+            Tool(
+                "task_wait",
+                "Wait up to a bounded timeout for one actionable durable task event and return a reusable cursor; timeout is a normal recovery heartbeat.",
+                obj(
+                    {
+                        "task_id": string,
+                        "after_id": integer,
+                        "timeout_seconds": integer,
+                        "actionable_only": boolean,
+                        "limit": integer,
+                    },
+                    ["task_id"],
+                ),
+                lambda a: self.db.wait_for_task(
+                    a["task_id"],
+                    after_id=a.get("after_id", 0),
+                    timeout_seconds=a.get("timeout_seconds", 30),
+                    actionable_only=a.get("actionable_only", True),
+                    limit=a.get("limit", 200),
+                ),
                 read_only=True,
                 idempotent=True,
             ),
@@ -445,12 +471,27 @@ class ForemanTools:
 
 
 class MCPServer:
-    def __init__(self, toolset: ForemanTools):
+    def __init__(
+        self,
+        toolset: ForemanTools,
+        *,
+        input_stream: Iterable[str] | None = None,
+        output_stream: TextIO | None = None,
+        max_request_workers: int = 16,
+        max_wait_workers: int = 32,
+    ):
         self.toolset = toolset
+        self.input_stream = input_stream if input_stream is not None else sys.stdin
+        self.output_stream = output_stream if output_stream is not None else sys.stdout
+        self.max_request_workers = max(1, int(max_request_workers))
+        self.max_wait_workers = max(1, int(max_wait_workers))
+        self._send_lock = threading.Lock()
 
     def send(self, payload: JSON) -> None:
-        sys.stdout.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
-        sys.stdout.flush()
+        encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
+        with self._send_lock:
+            self.output_stream.write(encoded)
+            self.output_stream.flush()
 
     def handle(self, message: JSON) -> JSON | None:
         request_id = message.get("id")
@@ -474,7 +515,11 @@ class MCPServer:
                 tool = self.toolset.tools.get(name)
                 if not tool:
                     raise KeyError(f"unknown tool: {name}")
-                value = tool.handler(params.get("arguments") or {})
+                if tool.read_only:
+                    value = tool.handler(params.get("arguments") or {})
+                else:
+                    with self.toolset.mutation_lock:
+                        value = tool.handler(params.get("arguments") or {})
                 result = {
                     "content": [{"type": "text", "text": json.dumps(value, ensure_ascii=False, default=str)}],
                     "structuredContent": {"result": value},
@@ -501,20 +546,54 @@ class MCPServer:
             }
 
     def run(self) -> None:
-        for raw in sys.stdin:
-            if not raw.strip():
-                continue
+        with ThreadPoolExecutor(
+            max_workers=self.max_request_workers,
+            thread_name_prefix="foreman-mcp",
+        ) as request_executor, ThreadPoolExecutor(
+            max_workers=self.max_wait_workers,
+            thread_name_prefix="foreman-wait",
+        ) as wait_executor:
             try:
-                message = json.loads(raw)
-                response = self.handle(message)
-            except json.JSONDecodeError as exc:
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": None,
-                    "error": {"code": -32700, "message": str(exc)},
-                }
-            if response is not None:
-                self.send(response)
+                for raw in self.input_stream:
+                    if not raw.strip():
+                        continue
+                    try:
+                        message = json.loads(raw)
+                    except json.JSONDecodeError as exc:
+                        self.send(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": None,
+                                "error": {"code": -32700, "message": str(exc)},
+                            }
+                        )
+                        continue
+                    if not isinstance(message, dict):
+                        self.send(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": None,
+                                "error": {"code": -32600, "message": "request must be an object"},
+                            }
+                        )
+                        continue
+                    params = message.get("params")
+                    is_wait = (
+                        message.get("method") == "tools/call"
+                        and isinstance(params, dict)
+                        and params.get("name") == "task_wait"
+                    )
+                    executor = wait_executor if is_wait else request_executor
+                    executor.submit(self._handle_and_send, message)
+            finally:
+                # EOF means the MCP client disconnected. Wake long-running reads
+                # so the bridge can exit instead of waiting for their timeouts.
+                self.toolset.db.wake.close()
+
+    def _handle_and_send(self, message: JSON) -> None:
+        response = self.handle(message)
+        if response is not None:
+            self.send(response)
 
 
 def main(argv: list[str] | None = None) -> None:

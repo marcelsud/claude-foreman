@@ -21,7 +21,7 @@ For Claude, use `sonnet` with `medium` effort for routine implementation and `op
 
 ## Monitor and unblock
 
-Use compact `task_list` for operational status. Poll `task_get` or `task_events` only when details are needed, using the last event ID as a cursor. Report meaningful phase changes, blockers, approval requests, and completed verification; do not relay every low-level event.
+Use compact `task_list` for an initial operational snapshot. Then call `task_wait` with the last returned event cursor so Foreman wakes the manager for approvals, failed verification, review-ready results, or terminal states without repeated polling. Reuse its `cursor` on the next wait; a `timeout` result is a normal recovery heartbeat. Call `task_get` or `task_events` only when full details are needed. Report meaningful phase changes, blockers, approval requests, and completed verification; do not relay every low-level event.
 
 Use `task_usage` for per-run and per-model usage and `goal_usage` for project totals. Treat `input_tokens` as new, non-cached input. Never describe `api_equivalent_cost_usd` as an actual subscription charge; a null cost means the subscription provider did not expose a per-task monetary value.
 

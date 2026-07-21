@@ -19,7 +19,7 @@ from .database import ForemanDB
 
 def run_doctor(config: ForemanConfig) -> dict[str, Any]:
     config.ensure_directories()
-    db = ForemanDB(config.db_path)
+    db = ForemanDB(config.db_path, data_dir=config.data_dir)
     db.initialize()
     credentials = Path.home() / ".claude" / ".credentials.json"
     sdk_spec = importlib.util.find_spec("claude_agent_sdk")

@@ -498,8 +498,10 @@ class CodexAppServerWorker:
             risk=risk,
             timeout_seconds=self.config.approval_timeout_seconds,
         )
+        approval_generation = self.db.wake.subscribe(
+            channel="approvals", key=approval["id"]
+        )
         while True:
-            await asyncio.sleep(self.config.poll_interval)
             if self.db.get_task(self.task.id).cancel_requested:
                 return False, None
             current = self.db.get_approval(approval["id"])
@@ -509,6 +511,13 @@ class CodexAppServerWorker:
             if current["status"] in {ApprovalStatus.REJECTED, ApprovalStatus.EXPIRED}:
                 self.db.update_task(self.task.id, status=TaskStatus.RUNNING)
                 return False, current.get("response")
+            approval_generation = await asyncio.to_thread(
+                self.db.wake.wait,
+                approval_generation,
+                self.db.wake.recovery_interval,
+                channel="approvals",
+                key=approval["id"],
+            )
 
     def _event(self, kind: str, payload: Any) -> None:
         if not self.task or not self.run_id:
