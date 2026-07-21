@@ -15,7 +15,7 @@ from .runner import ClaudeWorker
 class ForemanDaemon:
     def __init__(self, config: ForemanConfig):
         self.config = config
-        self.db = ForemanDB(config.db_path)
+        self.db = ForemanDB(config.db_path, data_dir=config.data_dir)
         self.worker = ClaudeWorker(config, self.db)
         self.stop_event = asyncio.Event()
         self.running: set[asyncio.Task[None]] = set()
@@ -37,6 +37,7 @@ class ForemanDaemon:
             self.db.add_event(None, None, "daemon.tasks_recovered", {"task_ids": recovered})
         if removed:
             self.db.add_event(None, None, "daemon.auth_environment_scrubbed", {"variables": removed})
+        queue_generation = self.db.wake.subscribe(channel="queue")
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:
@@ -51,11 +52,16 @@ class ForemanDaemon:
                     if task is None:
                         break
                     future = asyncio.create_task(self.worker.run(task), name=f"foreman-{task.id}")
+                    future.add_done_callback(
+                        lambda _: self.db.wake.publish(channel="queue")
+                    )
                     self.running.add(future)
-                try:
-                    await asyncio.wait_for(self.stop_event.wait(), timeout=self.config.poll_interval)
-                except TimeoutError:
-                    pass
+                queue_generation = await asyncio.to_thread(
+                    self.db.wake.wait,
+                    queue_generation,
+                    self.config.poll_interval,
+                    channel="queue",
+                )
             if self.running:
                 for worker in self.running:
                     worker.cancel()
@@ -68,6 +74,7 @@ class ForemanDaemon:
                 pass
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
             lock_handle.close()
+            self.db.wake.close()
 
 
 def main(argv: list[str] | None = None) -> None:

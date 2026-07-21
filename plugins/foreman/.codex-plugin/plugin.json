@@ -1,6 +1,6 @@
 {
   "name": "foreman",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Manage isolated background Claude Code and Codex workers",
   "author": {
     "name": "marcelsud",

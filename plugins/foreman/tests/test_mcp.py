@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -50,6 +52,7 @@ class MCPTests(unittest.TestCase):
         self.assertIn("workflow_run", names)
         self.assertIn("task_usage", names)
         self.assertIn("goal_usage", names)
+        self.assertIn("task_wait", names)
         create = next(item for item in listed["result"]["tools"] if item["name"] == "task_create")
         properties = create["inputSchema"]["properties"]
         self.assertEqual(["claude", "codex"], properties["provider"]["enum"])
@@ -91,6 +94,71 @@ class MCPTests(unittest.TestCase):
         )
         self.assertEqual("codex", task["provider"])
         self.assertEqual("gpt-5.6-terra", task["model"])
+
+    def test_task_wait_cursor_is_compatible_with_task_events(self) -> None:
+        task = self.toolset.db.create_task(repo_path=self.temp.name, prompt="wait")
+
+        waited = self.call(
+            "task_wait",
+            {
+                "task_id": task.id,
+                "after_id": 0,
+                "timeout_seconds": 0,
+                "actionable_only": False,
+            },
+        )
+        self.assertEqual("events_available", waited["reason"])
+        self.assertEqual([], self.call("task_events", {"task_id": task.id, "after_id": waited["cursor"]}))
+
+        event_id = self.toolset.db.add_event(task.id, None, "progress", {"step": 2})
+        events = self.call(
+            "task_events", {"task_id": task.id, "after_id": waited["cursor"]}
+        )
+        self.assertEqual([event_id], [event["id"] for event in events])
+
+    def test_stdio_wait_does_not_block_ping_and_writes_are_serialized(self) -> None:
+        task = self.toolset.db.create_task(repo_path=self.temp.name, prompt="wait")
+        cursor = self.toolset.db.event_tail(task.id, 1)[0]["id"]
+        requests = [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "task_wait",
+                    "arguments": {
+                        "task_id": task.id,
+                        "after_id": cursor,
+                        "timeout_seconds": 30,
+                    },
+                },
+            },
+            {"jsonrpc": "2.0", "id": 2, "method": "ping", "params": {}},
+        ]
+        def request_stream():
+            for item in requests:
+                yield json.dumps(item) + "\n"
+            time.sleep(0.1)
+
+        output_stream = io.StringIO()
+        server = MCPServer(
+            self.toolset,
+            input_stream=request_stream(),
+            output_stream=output_stream,
+            max_request_workers=1,
+            max_wait_workers=1,
+        )
+
+        started = time.monotonic()
+        server.run()
+
+        responses = [json.loads(line) for line in output_stream.getvalue().splitlines()]
+        self.assertEqual({1, 2}, {response["id"] for response in responses})
+        self.assertEqual(2, responses[0]["id"])
+        wait_response = next(response for response in responses if response["id"] == 1)
+        wait_payload = wait_response["result"]["structuredContent"]["result"]
+        self.assertEqual("interrupted", wait_payload["reason"])
+        self.assertLess(time.monotonic() - started, 1)
 
     def test_task_diff_includes_untracked_files_and_is_bounded(self) -> None:
         repo = self.data / "repo"

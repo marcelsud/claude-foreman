@@ -120,6 +120,13 @@ Show me the current Foreman tasks, meaningful progress, and pending approvals.
 
 `task_list` is compact by default, so operational status does not repeat full prompts. Ask for a full listing only when you need the original task definitions.
 
+For background supervision, managers should call `task_wait` with the last event
+cursor instead of repeatedly polling `task_events`. The call returns immediately
+when durable events already exist, otherwise it waits for an approval, failed
+verification, review-ready result, or terminal state. Its returned `cursor` can
+also be passed to `task_events`; a timeout is a normal heartbeat and returns the
+latest cursor so filtered low-level progress is not scanned again.
+
 For a live terminal view, open another shell in the repository after bootstrapping
 the runtime:
 

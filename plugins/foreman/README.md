@@ -84,6 +84,7 @@ The installed bridge uses `~/.local/share/foreman/runtime`, injects its own cach
 
 - Goals group durable outcomes; tasks carry a repository, prompt, provider, model, effort, turn budget, and dependencies. Queued tasks can be retuned with `task_configure` before the scheduler claims them.
 - `task_list` returns compact operational rows by default; `compact: false` preserves access to complete task rows. `task_get` remains the detailed task view.
+- `task_wait` blocks for up to a bounded timeout and returns the next actionable durable event plus a reusable cursor. It subscribes before reading SQLite, normally wakes through private local IPC, and falls back to a slow recovery read if IPC is unavailable or a hint is lost. Use `actionable_only: false` when every event is required; `task_events` remains available and uses the same cursor.
 - `task_usage` and `goal_usage` aggregate new input, cache creation/read, output, reasoning output, total tokens, duration, and provider-reported API-equivalent estimates across retries and requeues.
 - The detached scheduler atomically claims ready tasks from SQLite and records structured progress events.
 - The manager reads events, answers scoped approval requests, reviews the worktree diff, then accepts or requeues the task.
@@ -106,7 +107,7 @@ The installed bridge uses `~/.local/share/foreman/runtime`, injects its own cach
 - Force-push, merge, deployment, infrastructure apply, and sandbox bypass additionally require explicit human confirmation.
 - Foreman never commits, pushes, merges, deletes a worktree, or deploys automatically.
 
-SQLite state, daemon logs, and worktrees default to `~/.local/share/foreman`. Override the root with `FOREMAN_DATA_DIR`, or use `FOREMAN_DB_PATH`, `FOREMAN_WORKTREES_DIR`, `FOREMAN_LOGS_DIR`, and `FOREMAN_PID_PATH` individually. Prefer a local, non-synced filesystem when your sandbox policy permits it. Worker concurrency is `FOREMAN_MAX_WORKERS`; polling is `FOREMAN_POLL_INTERVAL`.
+SQLite state, daemon logs, and worktrees default to `~/.local/share/foreman`. Override the root with `FOREMAN_DATA_DIR`, or use `FOREMAN_DB_PATH`, `FOREMAN_WORKTREES_DIR`, `FOREMAN_LOGS_DIR`, and `FOREMAN_PID_PATH` individually. Prefer a local, non-synced filesystem when your sandbox policy permits it. Worker concurrency is `FOREMAN_MAX_WORKERS`; `FOREMAN_POLL_INTERVAL` is the scheduler's recovery sweep when a local wake hint is unavailable or lost.
 
 ## Development commands
 

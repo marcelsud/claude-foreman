@@ -82,12 +82,16 @@ class ClaudeWorker:
                 {"path": str(worktree.path), "branch": worktree.branch, "repo": str(worktree.repo_root)},
             )
             query_task = asyncio.create_task(self._query(task, run_id, worktree.path))
-            while not query_task.done():
-                await asyncio.sleep(self.config.poll_interval)
-                if self.db.get_task(task.id).cancel_requested:
-                    query_task.cancel()
-                    await asyncio.gather(query_task, return_exceptions=True)
-                    raise asyncio.CancelledError
+            cancel_task = asyncio.create_task(self._wait_for_cancel(task.id))
+            done, _ = await asyncio.wait(
+                {query_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if cancel_task in done and cancel_task.result():
+                query_task.cancel()
+                await asyncio.gather(query_task, return_exceptions=True)
+                raise asyncio.CancelledError
+            cancel_task.cancel()
+            await asyncio.gather(cancel_task, return_exceptions=True)
             result = await query_task
             self.db.update_task(task.id, status=TaskStatus.VERIFYING)
             verification = await run_verification_gates(
@@ -146,6 +150,19 @@ class ClaudeWorker:
             self.db.finish_run(run_id, run_status, None if cancelled else 1, message)
             self.db.add_event(task.id, run_id, f"run.{run_status}", {"error": message})
 
+    async def _wait_for_cancel(self, task_id: str) -> bool:
+        generation = self.db.wake.subscribe(channel="cancel", key=task_id)
+        while True:
+            if self.db.get_task(task_id).cancel_requested:
+                return True
+            generation = await asyncio.to_thread(
+                self.db.wake.wait,
+                generation,
+                self.db.wake.recovery_interval,
+                channel="cancel",
+                key=task_id,
+            )
+
     async def _query(self, task: Task, run_id: str, worktree: Path) -> str | None:
         if task.provider == "codex":
             from .codex_worker import CodexAppServerWorker
@@ -196,8 +213,10 @@ class ClaudeWorker:
                     "approval.human_required",
                     {"approval_id": approval["id"], "risk": risk},
                 )
+            approval_generation = self.db.wake.subscribe(
+                channel="approvals", key=approval["id"]
+            )
             while True:
-                await asyncio.sleep(self.config.poll_interval)
                 current_task = self.db.get_task(task.id)
                 if current_task.cancel_requested:
                     return PermissionResultDeny(message="Task was cancelled by its manager")
@@ -217,6 +236,13 @@ class ClaudeWorker:
                     return PermissionResultDeny(
                         message=current.get("decision_message") or f"Manager {current['status']} this action"
                     )
+                approval_generation = await asyncio.to_thread(
+                    self.db.wake.wait,
+                    approval_generation,
+                    self.db.wake.recovery_interval,
+                    channel="approvals",
+                    key=approval["id"],
+                )
 
         async def pre_tool_gate(input_data: Any, _tool_use_id: str | None, _context: Any):
             tool_name = str(input_data.get("tool_name", ""))

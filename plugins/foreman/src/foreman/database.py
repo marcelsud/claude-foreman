@@ -7,10 +7,12 @@ import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from time import monotonic
 from typing import Any, Iterator
 
 from .approval_policy import routine_sandboxed_command
 from .models import ApprovalStatus, Goal, GoalStatus, Task, TaskStatus, resolve_worker_config
+from .wake import LocalWake
 
 
 SCHEMA = """
@@ -167,14 +169,24 @@ CREATE INDEX IF NOT EXISTS idx_verification_results_task_run
 ON verification_results(task_id, run_id);
 """
 
+WAKE_EVENT_PREFIXES = (
+    "task.",
+    "run.",
+    "approval.",
+    "verification.",
+    "worktree.ready",
+    "review.feedback",
+)
+
 
 def utcnow() -> str:
     return datetime.now(UTC).isoformat()
 
 
 class ForemanDB:
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, *, data_dir: str | Path | None = None):
         self.path = Path(path)
+        self.wake = LocalWake(data_dir or self.path.parent)
 
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -317,6 +329,7 @@ class ForemanDB:
             task_id, None, "task.created",
             {"provider": provider, "model": model, "effort": effort},
         )
+        self.wake.publish(channel="queue")
         return self.get_task(task_id)
 
     def get_task(self, task_id: str) -> Task:
@@ -561,6 +574,7 @@ class ForemanDB:
         if verification_commands is not None:
             changes["verification_commands"] = list(verification_commands)
         self.add_event(task_id, None, "task.configured", changes)
+        self.wake.publish(channel="queue")
         return self.get_task(task_id)
 
     @staticmethod
@@ -607,6 +621,8 @@ class ForemanDB:
         if task.status in {TaskStatus.QUEUED, TaskStatus.AWAITING_REVIEW, TaskStatus.FAILED}:
             task = self.update_task(task_id, status=TaskStatus.CANCELLED, completed_at=utcnow())
         self.add_event(task_id, None, "task.cancel_requested", {})
+        self.wake.publish(channel="cancel", key=task_id)
+        self.wake.publish(channel="queue")
         return task
 
     def create_run(self, task_id: str) -> str:
@@ -640,7 +656,12 @@ class ForemanDB:
                 "INSERT INTO events(task_id, run_id, kind, payload_json, created_at) VALUES (?, ?, ?, ?, ?)",
                 (task_id, run_id, kind, json.dumps(payload, ensure_ascii=False, default=str), utcnow()),
             )
-            return int(cur.lastrowid)
+            event_id = int(cur.lastrowid)
+        # The connection context has committed before the lossy hint is sent.
+        # IPC failure must never affect the durable audit event.
+        if task_id is not None and kind.startswith(WAKE_EVENT_PREFIXES):
+            self.wake.publish(channel="events", key=task_id, event_id=event_id)
+        return event_id
 
     def events(self, task_id: str, after_id: int = 0, limit: int = 200) -> list[dict[str, Any]]:
         with self.connect() as conn:
@@ -654,6 +675,140 @@ class ForemanDB:
             item["payload"] = json.loads(item.pop("payload_json"))
             result.append(item)
         return result
+
+    @staticmethod
+    def _action_reason(event: dict[str, Any]) -> str | None:
+        kind = str(event["kind"])
+        payload = event.get("payload")
+        if kind == "approval.requested":
+            return "approval_required"
+        if kind == "run.awaiting_review":
+            return "review_required"
+        if kind == "verification.gate_completed" and isinstance(payload, dict):
+            if payload.get("status") != "passed":
+                return "verification_failed"
+        if kind == "verification.completed" and isinstance(payload, dict):
+            if payload.get("required_ok") is False:
+                return "verification_failed"
+        if kind in {"run.failed"}:
+            return "failed"
+        if kind in {"run.cancelled", "task.cancelled"}:
+            return "cancelled"
+        if kind == "task.accepted":
+            return "completed"
+        return None
+
+    @staticmethod
+    def _status_reason(status: str) -> str | None:
+        return {
+            TaskStatus.AWAITING_APPROVAL: "approval_required",
+            TaskStatus.AWAITING_REVIEW: "review_required",
+            TaskStatus.COMPLETED: "completed",
+            TaskStatus.FAILED: "failed",
+            TaskStatus.CANCELLED: "cancelled",
+        }.get(status)
+
+    def wait_for_task(
+        self,
+        task_id: str,
+        *,
+        after_id: int = 0,
+        timeout_seconds: float = 30.0,
+        actionable_only: bool = True,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        """Wait for durable task events without making the caller poll.
+
+        The subscription is established before the first SQLite read. Wake hints
+        only reduce latency; a bounded recovery read guarantees progress when IPC
+        is unavailable or a datagram is lost.
+        """
+        self.get_task(task_id)
+        cursor = max(0, int(after_id))
+        timeout = max(0.0, min(float(timeout_seconds), 300.0))
+        batch_limit = max(1, min(int(limit), 1000))
+        deadline = monotonic() + timeout
+        generation = self.wake.subscribe(channel="events", key=task_id)
+        filtered = 0
+
+        while True:
+            events = self.events(task_id, cursor, batch_limit)
+            if events:
+                if not actionable_only:
+                    cursor = int(events[-1]["id"])
+                    return self._wait_result(
+                        task_id, cursor, "events_available", events, filtered, timed_out=False
+                    )
+                first_actionable = next(
+                    (event for event in events if self._action_reason(event) is not None),
+                    None,
+                )
+                if first_actionable is not None:
+                    preceding = [
+                        event
+                        for event in events
+                        if int(event["id"]) < int(first_actionable["id"])
+                    ]
+                    filtered += len(preceding)
+                    cursor = int(first_actionable["id"])
+                    return self._wait_result(
+                        task_id,
+                        cursor,
+                        str(self._action_reason(first_actionable)),
+                        [first_actionable],
+                        filtered,
+                        timed_out=False,
+                    )
+                cursor = int(events[-1]["id"])
+                filtered += len(events)
+                # Drain more than one bounded batch immediately before waiting.
+                if len(events) == batch_limit:
+                    continue
+
+            task = self.get_task(task_id)
+            status_reason = self._status_reason(task.status)
+            if status_reason:
+                return self._wait_result(
+                    task_id, cursor, status_reason, [], filtered, timed_out=False
+                )
+            if self.wake.closed:
+                return self._wait_result(
+                    task_id, cursor, "interrupted", [], filtered, timed_out=False
+                )
+
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                return self._wait_result(
+                    task_id, cursor, "timeout", [], filtered, timed_out=True
+                )
+            generation = self.wake.wait(
+                generation,
+                min(remaining, self.wake.recovery_interval),
+                channel="events",
+                key=task_id,
+            )
+
+    def _wait_result(
+        self,
+        task_id: str,
+        cursor: int,
+        reason: str,
+        events: list[dict[str, Any]],
+        filtered: int,
+        *,
+        timed_out: bool,
+    ) -> dict[str, Any]:
+        task = self.get_task(task_id)
+        return {
+            "task_id": task_id,
+            "cursor": cursor,
+            "reason": reason,
+            "timed_out": timed_out,
+            "status": task.status,
+            "events": events,
+            "filtered_events": filtered,
+            "ipc_available": self.wake.ipc_available,
+        }
 
     def event_tail(self, task_id: str, limit: int = 20) -> list[dict[str, Any]]:
         with self.connect() as conn:
@@ -996,6 +1151,7 @@ class ForemanDB:
                 "approval.expired",
                 {"approval_id": approval_id},
             )
+            self.wake.publish(channel="approvals", key=approval_id)
         return len(expired)
 
     def close_pending_approvals(self, run_id: str, message: str) -> int:
@@ -1028,6 +1184,7 @@ class ForemanDB:
                 "approval.closed",
                 {"approval_id": approval_id, "message": message},
             )
+            self.wake.publish(channel="approvals", key=approval_id)
         return len(closed)
 
     def get_approval(self, approval_id: str) -> dict[str, Any]:
@@ -1123,6 +1280,7 @@ class ForemanDB:
             "approval.decided",
             {"approval_id": approval_id, "status": status, "decided_by": decided_by, "message": message},
         )
+        self.wake.publish(channel="approvals", key=approval_id)
         return self.get_approval(approval_id)
 
     def recover_interrupted_tasks(self) -> list[str]:
@@ -1191,7 +1349,7 @@ class ForemanDB:
             "review.feedback",
             {"actor": actor, "feedback": feedback.strip()},
         )
-        return self.update_task(
+        task = self.update_task(
             task_id,
             status=TaskStatus.QUEUED,
             error=None,
@@ -1199,6 +1357,8 @@ class ForemanDB:
             cancel_requested=0,
             completed_at=None,
         )
+        self.wake.publish(channel="queue")
+        return task
 
     def latest_review_feedback(self, task_id: str) -> str | None:
         with self.connect() as conn:
